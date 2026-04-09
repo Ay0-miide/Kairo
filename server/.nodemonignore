@@ -1,0 +1,10 @@
+# Don't restart the server for these — avoids killing live sessions
+*.log
+*.json
+!package.json
+bible_db.sqlite
+bible_db.sqlite-shm
+bible_db.sqlite-wal
+map.json
+node_modules/
+tmp/

@@ -1,0 +1,14 @@
+{
+  "name": "kairo",
+  "version": "2.0.0",
+  "description": "KAIRO v2 — Tauri + Logos-powered scripture detection",
+  "scripts": {
+    "server": "node server/server.js",
+    "dev": "npx @tauri-apps/cli@latest dev",
+    "build": "npx @tauri-apps/cli@latest build",
+    "test-server": "node server/server.js"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KAIRO</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- ═══════════════════════════════════════════════════════
+         TOP BAR
+    ═══════════════════════════════════════════════════════ -->
+    <div class="top-bar">
+        <div class="top-bar-left">
+            <span class="app-logo">KAIRO</span>
+            <div class="pill pill-red">
+                <span class="pill-dot"></span>
+                ON AIR
+            </div>
+            <span class="fps-counter" id="fps-counter">59 FPS</span>
+        </div>
+        <div class="top-bar-center">
+            <div class="pill pill-green">
+                <span class="pill-dot pulse"></span>
+                Mic Live
+            </div>
+            <span class="mic-label" id="mic-display">Select a microphone</span>
+        </div>
+        <div class="top-bar-right">
+            <span class="sermon-title" id="sermon-title" contenteditable="true" spellcheck="false">Untitled Sermon</span>
+            <span class="elapsed-badge"><span id="elapsed-time">0:00</span></span>
+            <button id="listen-btn" class="tb-listen-btn">
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><rect x="1" y="1" width="8" height="8" rx="1.5"/></svg>
+                <span class="listen-text">Start Listening</span>
+            </button>
+            <button id="export-btn" class="tb-btn" title="Export">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            </button>
+            <button id="settings-btn" class="tb-btn" title="Settings">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            </button>
+            <!-- Window controls: hidden on macOS (native traffic lights used instead) -->
+            <div class="window-controls">
+                <button id="minimize-btn" class="win-btn" aria-label="Minimize">
+                    <svg width="10" height="10" viewBox="0 0 12 12"><line x1="2" y1="6" x2="10" y2="6" stroke="currentColor" stroke-width="1.5"/></svg>
+                </button>
+                <button id="maximize-btn" class="win-btn" aria-label="Maximize">
+                    <svg width="10" height="10" viewBox="0 0 12 12"><rect x="2" y="2" width="8" height="8" stroke="currentColor" stroke-width="1.5" fill="none" rx="1"/></svg>
+                </button>
+                <button id="close-btn" class="win-btn close" aria-label="Close">
+                    <svg width="10" height="10" viewBox="0 0 12 12"><path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════
+         MAIN LAYOUT — 3 col: left sidebar | center stage | right intelligence
+    ═══════════════════════════════════════════════════════ -->
+    <div class="main-layout">
+
+        <!-- ─── LEFT SIDEBAR: Status + Transcript ─── -->
+        <aside class="left-sidebar">
+
+            <!-- Live status + compact metrics -->
+            <div class="ls-status-bar">
+                <div class="ls-status-row">
+                    <span class="ls-section-label">Live Status</span>
+                    <div class="ls-bcast-pill">
+                        <span class="ls-bcast-dot" id="ls-bcast-dot"></span>
+                        <span class="ls-bcast-label" id="ls-bcast-label">Idle</span>
+                    </div>
+                </div>
+                <div class="ls-metrics-bar">
+                    <div class="ls-metric">
+                        <span class="ls-metric-val" id="verse-count">0</span>
+                        <span class="ls-metric-lbl">Verses</span>
+                    </div>
+                    <div class="ls-metric-divider"></div>
+                    <div class="ls-metric">
+                        <span class="ls-metric-val" id="elapsed-time-metric">0:00</span>
+                        <span class="ls-metric-lbl">Time</span>
+                    </div>
+                    <div class="ls-metric-divider"></div>
+                    <div class="ls-metric">
+                        <span class="ls-metric-val ls-metric-green" id="avg-confidence">—</span>
+                        <span class="ls-metric-lbl">Conf.</span>
+                    </div>
+                    <div class="ls-metric-divider"></div>
+                    <div class="ls-metric">
+                        <span class="ls-metric-val" id="word-count">0</span>
+                        <span class="ls-metric-lbl">Words</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Transcript body -->
+            <div class="ls-transcript-section">
+                <div class="ls-transcript-header">
+                    <span class="ls-section-label">Live Transcript Log</span>
+                    <button id="clear-transcript" class="ls-icon-btn" title="Clear transcript">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+                    </button>
+                </div>
+                <div id="transcript-content" class="ls-transcript-body">
+                    <div class="empty-state-sm"><p>Click <strong>Start</strong> to begin live transcription</p></div>
+                </div>
+            </div>
+
+            <!-- Funnel tracker (JS compat) -->
+            <div id="funnel-tracker" class="funnel-tracker" style="display:none;">
+                <div class="funnel-tracker-row">
+                    <span class="funnel-tracker-icon">🔎</span>
+                    <span class="funnel-tracker-label" id="funnel-label">Funnel idle</span>
+                    <span class="funnel-tracker-words" id="funnel-words"></span>
+                </div>
+                <div class="funnel-tracker-bar"><div class="funnel-tracker-fill" id="funnel-bar-fill" style="width:0%"></div></div>
+            </div>
+
+            <!-- JS compat hidden sections -->
+            <div class="section detections-section" style="display:none;"><div id="suggestions-content" class="detections-body"></div></div>
+            <div id="context-intent-banner" style="display:none;"><span id="context-intent-status"></span><div id="context-intent-text"></div></div>
+
+        </aside>
+
+        <!-- ─── CENTER STAGE: Search | Live Queue ─── -->
+        <main class="center-stage">
+
+            <!-- Scripture lookup — single smart bar -->
+            <div class="cs-lookup">
+                <div class="cs-search-wrap">
+                    <input type="text" id="scripture-search-input" class="cs-search-input"
+                           placeholder='Jn 3:16  ·  Ps 23:1-3  ·  "God so loved the world"'>
+                    <button id="scripture-search-clear" class="cs-search-clear" title="Clear" style="display:none;">
+                        <svg width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M1 1l10 10M11 1L1 11" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+                    </button>
+                </div>
+                <select id="translation-select" class="cs-select cs-translation-select">
+                    <option value="KJV" selected>KJV</option>
+                    <option value="NIV">NIV</option>
+                    <option value="NLT">NLT</option>
+                    <option value="ESV">ESV</option>
+                    <option value="NASB">NASB</option>
+                    <option value="NKJV">NKJV</option>
+                </select>
+                <button id="scripture-search-btn" class="cs-search-btn" title="Search or send scripture">
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="6.5" cy="6.5" r="5" stroke="currentColor" stroke-width="1.5"/><path d="M10.5 10.5L14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                </button>
+            </div>
+
+            <!-- Live Queue — all sent + range verses, fills remaining space -->
+            <div class="cs-live-queue-section cs-live-queue-main">
+                <div class="cs-section-header">
+                    <span class="cs-section-label">Live Queue</span>
+                    <span class="cs-auto-badge"><span class="cs-auto-dot pulse"></span>Auto-Deploy</span>
+                    <button id="clear-locked-btn" class="cs-clear-btn" style="margin-left:8px;">
+                        <svg width="8" height="8" viewBox="0 0 12 12" fill="none"><path d="M1 1l10 10M11 1L1 11" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+                        Clear
+                    </button>
+                </div>
+                <!-- serves as both rs-live-queue and current-display-card -->
+                <div id="current-display-card" class="cs-live-queue-body cs-live-queue-scroll">
+                    <div class="cs-queue-empty">Sent verses and range queues appear here…</div>
+                </div>
+            </div>
+
+        </main>
+
+        <!-- ─── RIGHT SIDEBAR: PP sync + Preview + Candidates ─── -->
+        <aside class="right-sidebar">
+
+            <!-- ProPresenter sync -->
+            <div class="rs-pp-bar">
+                <label class="sync-toggle" title="Toggle auto-send to ProPresenter">
+                    <input type="checkbox" id="auto-send-checkbox">
+                    <span class="sync-track"><span class="sync-thumb"></span></span>
+                </label>
+                <span class="rs-pp-label">ProPresenter Sync</span>
+                <span class="bs-dot" id="propresenter-dot"></span>
+                <span class="rs-pp-status" id="propresenter-status">Checking…</span>
+            </div>
+
+            <!-- Live preview — compact 16:9 in right sidebar -->
+            <div class="rs-preview-card">
+                <div class="live-screen" id="slide-preview">
+                    <div class="live-screen-inner">
+                        <div class="live-screen-text" id="preview-verse-text">Nothing on display</div>
+                        <div class="live-screen-ref" id="preview-verse-ref"></div>
+                    </div>
+                    <div class="live-screen-badge">LIVE</div>
+                </div>
+                <!-- Range navigation -->
+                <div id="range-nav-bar" class="range-nav-bar" style="display:none">
+                    <div class="range-nav-left">
+                        <span class="range-nav-icon">
+                            <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 6h8M6 2l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                        </span>
+                        <span class="range-nav-label" id="range-nav-label">Range 1 / 3</span>
+                        <span class="range-nav-ref" id="range-nav-ref"></span>
+                    </div>
+                    <div class="range-nav-right">
+                        <button class="range-nav-btn range-nav-next" id="range-next-btn">
+                            Next
+                            <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 6h8M6 2l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                        </button>
+                        <button class="range-nav-btn range-nav-clear" id="range-clear-btn" title="End range">
+                            <svg width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M1 1l10 10M11 1L1 11" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Candidates — verbatim / phrase matches only -->
+            <div class="rs-section rs-candidates">
+                <div class="rs-section-hdr">
+                    <span class="rs-section-title">Candidates</span>
+                    <span class="rs-count-badge" id="suggestion-count-badge">0</span>
+                    <button id="clear-suggestions-btn" class="rs-clear-btn" title="Clear">
+                        <svg width="8" height="8" viewBox="0 0 12 12" fill="none"><path d="M1 1l10 10M11 1L1 11" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+                    </button>
+                </div>
+                <div class="rs-candidates-body queue-body" id="queue-list">
+                    <div class="display-empty">Phrase matches appear here</div>
+                </div>
+            </div>
+
+            <!-- Topic chips (hidden — too noisy) -->
+            <div id="topic-chips-section" style="display:none!important;">
+                <div id="topic-chips-wrap"></div>
+            </div>
+
+        </aside>
+
+        <!-- JS compat: rs-live-queue alias → same element -->
+        <div id="rs-live-queue" style="display:none"></div>
+
+    </div>
+
+    <!-- JS compat hidden elements -->
+    <span class="hidden-el" id="suggestion-count">0</span>
+    <div class="hidden-el" id="rd-list"></div>
+
+    <!-- Hidden Controls -->
+    <select id="audio-source" class="hidden-el"><option value="">Select a microphone...</option></select>
+    <input type="checkbox" id="show-confidence-checkbox" class="hidden-el" checked>
+
+    <!-- Settings Modal (JS-compatible IDs) -->
+    <div id="settings-modal" class="modal hidden">
+        <div class="modal-overlay"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Settings</h2>
+                <button id="close-settings" class="modal-close-btn">
+                    <svg width="16" height="16" viewBox="0 0 16 16"><path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="setting-group">
+                    <label class="setting-label">Deepgram API Key</label>
+                    <input type="password" id="deepgram-key" class="setting-input" placeholder="dg_...">
+                </div>
+                <div class="setting-group">
+                    <label class="setting-label">Speech Engine</label>
+                    <div class="toggle-group" id="speech-engine-toggle">
+                        <button class="toggle-btn active" data-engine="deepgram">Deepgram</button>
+                        <button class="toggle-btn" data-engine="browser">Browser (Free)</button>
+                    </div>
+                </div>
+                <div class="setting-group">
+                    <label class="setting-label">Audio Input</label>
+                    <div class="toggle-group" id="audio-mode-toggle">
+                        <button class="toggle-btn active" data-mode="mic">🎙 Mic</button>
+                        <button class="toggle-btn" data-mode="line-in">🔌 Line In</button>
+                    </div>
+                    <p class="setting-hint" id="audio-mode-hint">Built-in or USB microphone with noise suppression</p>
+                </div>
+                <div class="setting-group">
+                    <label class="setting-label">Audio Source</label>
+                    <div style="display:flex;gap:6px;align-items:center;">
+                        <select id="audio-source-settings" class="setting-input" style="flex:1;">
+                            <option value="">Loading devices...</option>
+                        </select>
+                        <button id="refresh-devices-settings" class="modal-btn secondary" style="white-space:nowrap;font-size:11px;">↻</button>
+                    </div>
+                </div>
+                <div class="setting-group">
+                    <label class="setting-label">ProPresenter URL</label>
+                    <div style="display:flex;gap:6px;">
+                        <input type="text" id="propresenter-url" class="setting-input" value="http://localhost:1025" style="flex:1;">
+                        <button id="test-propresenter-btn" class="modal-btn secondary" style="white-space:nowrap;">Test</button>
+                    </div>
+                </div>
+                <div class="setting-group">
+                    <label class="setting-label">PP Text Token Order</label>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <span id="pp-token-order-label" style="font-size:12px;color:var(--text-secondary);flex:1;">Token[0] = Verse Text &nbsp;·&nbsp; Token[1] = Reference</span>
+                        <button id="swap-pp-tokens-btn" class="modal-btn secondary" style="white-space:nowrap;font-size:11px;">⇄ Swap</button>
+                    </div>
+                    <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">If reference and text appear on the wrong layer in PP, click Swap.</div>
+                </div>
+                <div class="setting-group">
+                    <label class="setting-label">Bible Translation</label>
+                    <select id="translation-select-settings" class="setting-input">
+                        <option value="KJV" selected>KJV</option>
+                        <option value="NIV">NIV</option>
+                        <option value="NLT">NLT</option>
+                        <option value="ESV">ESV</option>
+                        <option value="NASB">NASB</option>
+                        <option value="NKJV">NKJV</option>
+                    </select>
+                </div>
+                <div class="setting-group">
+                    <label class="bs-check-label">
+                        <input type="checkbox" id="auto-send-settings" checked>
+                        Auto-send high confidence verses
+                    </label>
+                    <label class="bs-check-label">
+                        <input type="checkbox" id="show-confidence-settings" checked>
+                        Show confidence scores
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="cancel-settings" class="modal-btn secondary">Cancel</button>
+                <button id="save-settings" class="modal-btn primary">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Audio Level -->
+    <div id="audio-level" class="hidden-el"></div>
+    <!-- Insights status (hidden, JS compat) -->
+    <span id="insights-status" class="hidden-el"></span>
+    <span class="status-dot hidden-el" id="status-indicator"></span>
+    <span class="hidden-el" id="status-text"></span>
+    <div id="connection-badge" class="hidden-el"></div>
+    <!-- Worker / Whisper status (hidden, JS compat) -->
+    <span class="hidden-el" id="worker-status"></span>
+    <span class="hidden-el" id="worker-indicator"></span>
+    <span class="hidden-el" id="whisper-status"></span>
+    <span class="hidden-el" id="whisper-indicator"></span>
+
+    <!-- Toast Container -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <script src="app.js"></script>
+</body>
+</html>

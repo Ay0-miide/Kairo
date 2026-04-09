@@ -1,0 +1,2334 @@
+/* KAIRO — UI */
+
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg:         #000000;
+  --bg-panel:   #0a0a0a;
+  --bg-card:    #111111;
+  --bg-hover:   #1a1a1a;
+  --bg-input:   #0d0d0d;
+  --bg-slide:   #080808;
+
+  --border:      rgba(255,255,255,0.06);
+  --border-md:   rgba(255,255,255,0.10);
+
+  --text:        #f0f0f0;
+  --text-2:      #888888;
+  --text-3:      #444444;
+  --text-4:      #222222;
+
+  --red:         #e8404a;
+  --red-dim:     rgba(232,64,74,0.15);
+  --green:       #e8404a;
+  --green-dim:   rgba(232,64,74,0.14);
+  --blue:        #3b82f6;
+  --blue-dim:    rgba(59,130,246,0.15);
+  --blue-slide:  #2563eb;
+  --orange:      #f59e0b;
+  --purple:      #8b5cf6;
+
+  --radius-sm:  5px;
+  --radius:     8px;
+  --radius-lg:  12px;
+  --trans:      150ms ease;
+  --font:      'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-head: 'Manrope', -apple-system, BlinkMacSystemFont, sans-serif;
+  --mono: 'SF Mono', 'Fira Code', monospace;
+
+  --topbar-h: 46px;
+
+  --shadow-sm: 0 1px 6px rgba(0,0,0,0.2);
+  --shadow-md: 0 2px 12px rgba(0,0,0,0.4);
+}
+
+html, body {
+  height: 100%;
+  font-family: var(--font);
+  font-weight: 400;
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Thin custom scrollbars (Webkit) */
+::-webkit-scrollbar         { width: 4px; height: 4px; }
+::-webkit-scrollbar-track   { background: transparent; }
+::-webkit-scrollbar-thumb   { background: rgba(255,255,255,0.08); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.16); }
+
+/* ══════════════════════════════════════
+   TOP BAR
+══════════════════════════════════════ */
+.top-bar {
+  height: var(--topbar-h);
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  gap: 0;
+  -webkit-app-region: drag;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 20;
+}
+
+/* macOS: push content right of the native traffic lights (x:16, width:~56px + 12px gap) */
+.platform-darwin .top-bar { padding-left: 84px; }
+
+.top-bar-left,
+.top-bar-center,
+.top-bar-right,
+.window-controls {
+  -webkit-app-region: no-drag;
+}
+
+.top-bar-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.app-logo {
+  font-family: var(--font-head);
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--green);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 20px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.pill-red {
+  background: var(--red-dim);
+  color: var(--red);
+  border: 1px solid rgba(232,64,74,0.3);
+}
+
+.pill-green {
+  background: var(--green-dim);
+  color: var(--green);
+  border: 1px solid rgba(232,64,74,0.3);
+}
+
+.pill-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.pill-dot.pulse {
+  animation: dot-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes dot-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.7); }
+}
+
+.fps-counter {
+  font-size: 10px;
+  color: var(--text-3);
+  font-family: var(--mono);
+  letter-spacing: 0.3px;
+  flex-shrink: 0;
+}
+
+.top-bar-center {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.mic-label {
+  font-size: 11px;
+  font-weight: 300;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.top-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.sermon-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-2);
+  outline: none;
+  border-bottom: 1px solid transparent;
+  transition: border-color var(--trans);
+  cursor: text;
+  -webkit-user-select: text;
+  user-select: text;
+  white-space: nowrap;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sermon-title:focus { border-bottom-color: var(--blue); color: var(--text); }
+
+.elapsed-badge {
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--text-3);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 2px 8px;
+  flex-shrink: 0;
+}
+
+.tb-btn {
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-3);
+  cursor: pointer;
+  transition: all var(--trans);
+  flex-shrink: 0;
+}
+
+.tb-btn:hover { background: var(--bg-hover); color: var(--text); border-color: var(--border-md); }
+
+/* Start / Stop button in top bar */
+.tb-listen-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 20px;
+  min-width: 136px;
+  background: var(--red);
+  border: none;
+  border-radius: var(--radius-sm);
+  color: white;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--trans), box-shadow var(--trans);
+  -webkit-app-region: no-drag;
+}
+
+.tb-listen-btn:hover { background: #cc3038; }
+
+.tb-listen-btn.active {
+  background: var(--red-dim);
+  color: var(--red);
+  border: 1px solid rgba(232,64,74,0.35);
+  animation: pulse-red 2s ease-in-out infinite;
+}
+
+.window-controls {
+  display: flex;
+  gap: 4px;
+  margin-left: 6px;
+  flex-shrink: 0;
+}
+
+/* Hide native window controls on macOS — system traffic lights handle it */
+.platform-darwin .window-controls { display: none; }
+
+.win-btn {
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text-3);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all var(--trans);
+}
+
+.win-btn:hover { background: var(--bg-hover); color: var(--text); }
+.win-btn.close:hover { background: var(--red); color: white; }
+
+/* (Old 2-column .main-layout removed — overridden by 3-column grid layout below) */
+
+/* (Old left-panel, section-header, action-btn, btn-red removed — dead code) */
+
+@keyframes pulse-red {
+  0%, 100% { outline: 0px solid rgba(232,64,74,0.3); outline-offset: 0; }
+  50% { outline: 4px solid rgba(232,64,74,0); outline-offset: 0; }
+}
+
+/* (Old .icon-action-btn, .count-badge removed — dead code) */
+
+/* ── Transcript body ── */
+.transcript-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 14px;
+  min-height: 0;
+}
+
+.transcript-entry {
+  display: block;
+  margin-bottom: 8px;
+  padding: 0;
+  animation: fade-up 220ms ease-out;
+  position: relative;
+}
+
+.transcript-entry.live {
+  border-left: 2px solid var(--red);
+  padding-left: 8px;
+  margin-left: -2px;
+}
+
+.transcript-time {
+  font-size: 9px;
+  color: var(--text-3);
+  font-family: var(--mono);
+  display: inline;
+  margin-right: 5px;
+}
+
+.transcript-text {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text);
+  display: inline;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.transcript-entry.live .transcript-time { color: var(--red); }
+.transcript-entry.live .transcript-text { color: var(--text); }
+
+/* ── Detections body ── */
+.detections-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 10px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Detection card (maps from scripture-card) */
+.scripture-card,
+.detection-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: all var(--trans);
+  animation: fade-up 220ms ease-out;
+  position: relative;
+}
+
+.scripture-card:hover,
+.detection-card:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-md);
+}
+
+.detection-row-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  gap: 6px;
+}
+
+.detection-time {
+  font-size: 9px;
+  color: var(--text-3);
+  font-family: var(--mono);
+  flex-shrink: 0;
+}
+
+.detection-phrase {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.detection-confidence {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--green);
+  flex-shrink: 0;
+  font-family: var(--mono);
+}
+
+.detection-row-bottom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 3px;
+}
+
+.detection-ref {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--blue);
+}
+
+.scripture-card.direct .detection-ref,
+.detection-card.direct .detection-ref { color: var(--green); }
+
+.detection-id {
+  font-size: 9px;
+  color: var(--text-3);
+  font-family: var(--mono);
+}
+
+.detection-timing {
+  font-size: 9px;
+  color: var(--text-3);
+  margin-left: auto;
+  font-family: var(--mono);
+}
+
+/* Tag badges on cards */
+.scripture-tag {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.scripture-tag.direct  { background: var(--green-dim); color: var(--green); }
+.scripture-tag.funnel  { background: rgba(251, 146, 60, 0.12); color: #f97316; }
+.scripture-tag.semantic { background: var(--blue-dim); color: var(--blue); }
+.scripture-card.funnel .scripture-ref { color: #f97316; }
+
+/* ── Funnel Tracker Banner ── */
+.funnel-tracker {
+  margin: 0 0 2px 0;
+  padding: 6px 10px;
+  background: rgba(251, 146, 60, 0.06);
+  border: 1px solid rgba(251, 146, 60, 0.15);
+  border-radius: 6px;
+  font-size: 10.5px;
+  transition: all 300ms ease;
+}
+.funnel-tracker.active {
+  background: rgba(251, 146, 60, 0.1);
+  border-color: rgba(251, 146, 60, 0.35);
+}
+.funnel-tracker-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.funnel-tracker-icon {
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.funnel-tracker-label {
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.funnel-tracker-words {
+  margin-left: auto;
+  font-size: 10px;
+  color: #f97316;
+  font-weight: 500;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.funnel-tracker-bar {
+  margin-top: 4px;
+  height: 2px;
+  background: rgba(251, 146, 60, 0.1);
+  border-radius: 1px;
+  overflow: hidden;
+}
+.funnel-tracker-fill {
+  height: 100%;
+  background: #f97316;
+  border-radius: 1px;
+  transition: width 300ms ease;
+}
+
+/* Legacy card fields for JS compat */
+.scripture-card-top     { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px; gap: 8px; }
+.scripture-ref          { font-size: 13px; font-weight: 700; color: var(--blue); flex-shrink: 0; }
+.scripture-card.direct .scripture-ref { color: var(--green); }
+.scripture-verse        { font-size: 12px; font-weight: 700; line-height: 1.55; color: var(--text-2); margin-bottom: 8px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; -webkit-user-select: text; user-select: text; }
+.scripture-card:hover .scripture-verse { -webkit-line-clamp: unset; }
+.scripture-actions      { display: flex; align-items: center; gap: 5px; }
+.scripture-action-btn   { width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; background: transparent; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-3); cursor: pointer; transition: all var(--trans); }
+.scripture-action-btn:hover { background: var(--bg-hover); color: var(--text); border-color: var(--border-md); }
+.scripture-note-btn     { margin-left: auto; padding: 4px 10px; background: var(--blue-dim); border: 1px solid rgba(59,130,246,0.25); border-radius: var(--radius-sm); color: var(--blue); font-size: 11px; font-weight: 600; cursor: pointer; transition: all var(--trans); }
+.scripture-note-btn:hover { background: var(--blue); color: white; }
+
+/* Confidence badge — colour tiers for quick at-a-glance quality */
+.conf-badge      { display: inline-block; font-size: 10px; font-weight: 800; border-radius: 4px; padding: 1px 5px; margin-left: 4px; line-height: 1.4; letter-spacing: 0.04em; }
+.conf-high       { background: #3d080a; color: #fca5a5; }  /* ≥ 90% — gold */
+.conf-good       { background: #1e3a5f; color: #93c5fd; }  /* 80–89% — blue */
+.conf-mid        { background: #3b2f08; color: #fde68a; }  /* 60–79% — amber */
+.conf-low        { background: #3b0f0f; color: #fca5a5; }  /* < 60%  — red   */
+
+/* Locked verse card (JS compat) */
+.locked-verse-card      { background: var(--bg-card); border-radius: var(--radius); padding: 10px 12px; margin-bottom: 8px; border-left: 3px solid var(--blue); transition: transform 0.2s; -webkit-user-select: none; user-select: none; cursor: pointer; }
+.locked-verse-card:hover { transform: translateX(2px); }
+.locked-verse-header    { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+.locked-verse-num       { font-weight: 800; color: var(--blue); font-size: 10px; letter-spacing: 0.3px; }
+.locked-verse-content   { font-size: 12px; font-weight: 700; line-height: 1.5; color: var(--text); }
+/* Active (most recently sent) card in the sent history */
+.locked-verse-card.sent-active { border-left-color: var(--green) !important; background: var(--green-dim) !important; }
+.locked-verse-card.sent-active .locked-verse-num { color: var(--green); }
+/* Dimmed — previously sent, no longer active */
+.locked-verse-card.sent-verse-card:not(.sent-active) { opacity: 0.6; }
+
+/* ── Unified verse card (sent + suggestion) ─────────────────────────────── */
+/* Both share the same base card; modifiers control colour + behaviour.        */
+.locked-verse-card,
+.suggestion-card {
+  position: relative;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  overflow: hidden;
+  animation: fade-up 220ms ease-out;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+/* Sent card — gold left rule + faint gold bg tint */
+.locked-verse-card {
+  border-left: 2px solid rgba(232,64,74,0.4);
+  background: rgba(232,64,74,0.025);
+}
+.locked-verse-card:hover { border-color: rgba(232,64,74,0.5); }
+
+/* Suggestion card — blue hover accent */
+.suggestion-card { border-left: 2px solid var(--border); }
+.suggestion-card:hover { border-left-color: var(--blue); border-color: rgba(59,130,246,0.25); }
+
+/* Inner layout */
+.lvc-ref {
+  font-family: var(--font-head);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 4px;
+  padding-right: 52px; /* leave room for the abs badge */
+  letter-spacing: -0.01em;
+}
+
+.lvc-status {
+  font-family: var(--font-head);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 4px;
+}
+.locked-verse-card .lvc-status { color: var(--green); }
+
+.lvc-text {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.6;
+  color: var(--text-2);
+  font-style: italic;
+  margin-bottom: 9px;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.lvc-actions { display: flex; gap: 6px; }
+
+.lvc-send-btn {
+  flex: 1;
+  font-family: var(--font-head);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.locked-verse-card .lvc-send-btn {
+  background: rgba(255,255,255,0.04);
+  color: var(--text-2);
+  border: 1px solid var(--border-md);
+}
+.locked-verse-card .lvc-send-btn:hover { background: var(--bg-hover); color: var(--text); }
+
+.suggestion-card .lvc-send-btn {
+  background: var(--blue);
+  color: #fff;
+}
+.suggestion-card .lvc-send-btn:hover { opacity: 0.88; }
+
+.lvc-promote-btn {
+  font-family: var(--font-head);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-md);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.lvc-promote-btn:hover { background: var(--bg-hover); color: var(--text); }
+
+/* Confidence badge — absolute top-right of card */
+.conf-badge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  font-family: var(--font-head);
+  font-size: 9px;
+  font-weight: 800;
+  border-radius: 4px;
+  padding: 2px 6px;
+  letter-spacing: 0.05em;
+  line-height: 1.4;
+}
+.conf-high  { background: rgba(61,8,10,0.8);   color: #fca5a5; border: 1px solid rgba(232,64,74,0.25); }
+.conf-good  { background: rgba(30,58,95,0.8);  color: #93c5fd; border: 1px solid rgba(147,197,253,0.2); }
+.conf-mid   { background: rgba(59,47,8,0.8);   color: #fde68a; border: 1px solid rgba(253,230,138,0.2); }
+.conf-low   { background: rgba(59,15,15,0.8);  color: #fca5a5; border: 1px solid rgba(252,165,165,0.2); }
+/* Pulse — same verse re-detected, card already at top */
+@keyframes sentPulse { 0%,100% { border-left-color: var(--blue); } 50% { border-left-color: var(--green); box-shadow: 0 0 0 2px var(--green-dim); } }
+.locked-verse-card.sent-pulse { animation: sentPulse 0.6s ease; }
+
+/* ── Topic detection chips ── */
+.topic-chips-section {
+  flex-shrink: 0;
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: rgba(59,130,246,0.04);
+  border: 1px solid rgba(59,130,246,0.12);
+  border-radius: var(--radius);
+}
+
+.topic-chips-label {
+  font-family: var(--font-head);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin-bottom: 8px;
+}
+
+.topic-chips-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.topic-chip {
+  font-family: var(--font-head);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--blue);
+  background: var(--blue-dim);
+  border: 1px solid rgba(59,130,246,0.2);
+  border-radius: 6px;
+  padding: 3px 8px;
+  animation: fade-up 200ms ease-out;
+}
+
+/* ── Range banner ── */
+.range-banner { display: flex; align-items: center; gap: 8px; background: var(--bg-card); border: 1px solid var(--blue); border-radius: var(--radius); padding: 8px 12px; margin-bottom: 8px; }
+.range-label { font-size: 10px; font-weight: 700; color: var(--blue); text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; }
+.range-next { font-size: 11px; color: var(--text-muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.range-next-btn { font-size: 11px; font-weight: 700; background: var(--blue); color: white; border: none; border-radius: 4px; padding: 4px 10px; cursor: pointer; white-space: nowrap; }
+.range-next-btn:hover { opacity: 0.85; }
+.range-clear-btn { font-size: 11px; color: var(--text-muted); background: none; border: none; cursor: pointer; padding: 2px 4px; }
+.range-clear-btn:hover { color: var(--text); }
+
+/* (Old .metrics-grid, .metric-cell, .metric-value, .metric-label removed — dead code) */
+
+/* (Old .right-panel, .right-scroll, .rp-card* removed — dead code) */
+
+/* (Old cd-* horizontal split layout removed — dead code) */
+
+/* (Old .rp-search-*, .rp-picker-*, .rp-select, .rp-go-btn removed — dead code) */
+
+/* ── Live screen (16:9 ProPresenter preview) ── */
+.live-screen {
+  aspect-ratio: 16 / 9;
+  background: linear-gradient(160deg, #0e1a3a 0%, #071030 50%, #0d0d1e 100%);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  border: 1px solid rgba(59,130,246,0.18);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.03);
+  flex-shrink: 0;
+}
+
+.live-screen::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 50% 0%, rgba(59,130,246,0.12) 0%, transparent 60%),
+    linear-gradient(to bottom, transparent 70%, rgba(0,0,0,0.4) 100%);
+  pointer-events: none;
+}
+
+.live-screen-inner {
+  padding: 10px 24px;
+  text-align: center;
+  position: relative;
+  z-index: 1;
+  max-width: 100%;
+  width: 100%;
+}
+
+.live-screen-text {
+  font-family: var(--font);
+  font-size: clamp(10px, 0.85vw, 13px);
+  font-weight: 600;
+  color: rgba(255,255,255,0.95);
+  line-height: 1.55;
+  font-style: normal;
+  margin-bottom: 6px;
+  letter-spacing: 0.01em;
+  -webkit-user-select: text;
+  user-select: text;
+  display: -webkit-box;
+  -webkit-line-clamp: 8;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.live-screen-ref {
+  font-family: var(--font-head);
+  font-size: clamp(10px, 1vw, 13px);
+  font-weight: 800;
+  color: var(--blue);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  opacity: 0.9;
+}
+
+/* LIVE badge in corner */
+.live-screen-badge {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  font-family: var(--font-head);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: white;
+  background: var(--red);
+  padding: 3px 8px;
+  border-radius: 20px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.live-screen-badge::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: white;
+  animation: dot-pulse 1.8s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+/* ── Locked verses list (below live screen) ── */
+.locked-list {
+  padding: 8px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+/* ── Queue body — fills card height, scrolls internally ── */
+.queue-body {
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+}
+
+/* (Old .rp-card .rd-list, .sync-pp-status removed — dead code) */
+
+/* (Old .right-tabs, .rtab, .inline-lookup, .tab-content removed — dead code) */
+
+/* (Old SCRIPTURES TAB: display-queue-row, dq-*, current-locked-card, queue-item removed — dead code) */
+
+.display-empty {
+  font-size: 11px;
+  color: var(--text-3);
+  text-align: center;
+  padding: 10px 6px;
+  align-self: center;
+  width: 100%;
+}
+
+/* (Old slide preview, recent detections, rd-* removed — dead code) */
+
+/* Sync toggle */
+.sync-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.sync-track {
+  width: 28px;
+  height: 16px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-md);
+  border-radius: 10px;
+  position: relative;
+  transition: background var(--trans);
+}
+
+.sync-thumb {
+  width: 10px;
+  height: 10px;
+  background: var(--text-3);
+  border-radius: 50%;
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  transition: all var(--trans);
+}
+
+.sync-toggle input:checked ~ .sync-track { background: var(--green-dim); border-color: rgba(232,64,74,0.4); }
+.sync-toggle input:checked ~ .sync-track .sync-thumb { background: var(--green); left: 14px; }
+.sync-toggle input { display: none; }
+.sync-label { font-size: 10px; color: var(--text-2); font-weight: 500; }
+
+/* ── PP Error State (blinking red) ── */
+.pp-error-state {
+  animation: pp-blink 1s ease-in-out infinite;
+}
+@keyframes pp-blink {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.3; }
+}
+
+/* (Old THEMES TAB and BROADCAST TAB removed — dead code) */
+
+.bs-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-3);
+  flex-shrink: 0;
+}
+
+.bs-dot.active {
+  background: var(--green);
+  box-shadow: 0 0 6px rgba(232,64,74,0.4);
+}
+
+/* (Old .bs-info, .bs-title, .bs-sub, .broadcast-settings, .bs-setting-*, .bs-input*, .bs-test-btn, .bs-link removed — dead code) */
+
+.bs-check-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--text-2);
+  cursor: pointer;
+  padding: 2px 0;
+}
+
+.bs-check-label input { accent-color: var(--blue); width: 14px; height: 14px; }
+
+/* (Old .bs-save-row, .bs-save-btn removed — dead code) */
+
+/* Toggle group (shared) */
+.toggle-group {
+  display: flex;
+  background: var(--bg-input);
+  border: 1px solid var(--border-md);
+  border-radius: var(--radius-sm);
+  padding: 2px;
+  gap: 2px;
+}
+
+.toggle-btn {
+  flex: 1;
+  padding: 6px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-3);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--trans);
+}
+
+.toggle-btn.active { background: var(--blue); color: white; }
+.toggle-btn:hover:not(.active) { color: var(--text-2); }
+
+/* Test result */
+.test-result {
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+}
+
+.test-result.hidden { display: none; }
+.test-result.success { background: var(--green-dim); color: var(--green); border: 1px solid rgba(232,64,74,0.25); }
+.test-result.error   { background: var(--red-dim); color: var(--red); border: 1px solid rgba(232,64,74,0.25); }
+
+/* ══════════════════════════════════════
+   SETTINGS MODAL (JS compat)
+══════════════════════════════════════ */
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal.hidden { display: none !important; }
+
+.modal-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.65);
+  backdrop-filter: blur(8px);
+}
+
+.modal-content {
+  position: relative;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-md);
+  border-radius: var(--radius-lg);
+  width: 460px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 24px 60px rgba(0,0,0,0.6);
+  animation: modal-in 180ms ease-out;
+}
+
+@keyframes modal-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.97); }
+  to   { opacity: 1; transform: none; }
+}
+
+.modal-header {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.modal-header h2 { font-size: 14px; font-weight: 700; margin: 0; }
+
+.modal-close-btn {
+  width: 26px; height: 26px;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; border: none;
+  color: var(--text-3); cursor: pointer;
+  border-radius: 4px; transition: all var(--trans);
+}
+
+.modal-close-btn:hover { background: var(--bg-hover); color: var(--text); }
+
+.modal-body {
+  flex: 1; overflow-y: auto;
+  padding: 18px;
+  display: flex; flex-direction: column; gap: 18px;
+}
+
+.setting-group { display: flex; flex-direction: column; gap: 5px; }
+
+.setting-label {
+  font-size: 10px; font-weight: 700;
+  letter-spacing: 0.5px; text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.setting-input {
+  padding: 8px 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-md);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 12px; font-family: inherit;
+  outline: none; transition: border-color var(--trans);
+  -webkit-appearance: none;
+}
+
+.setting-input:focus { border-color: var(--blue); }
+
+.setting-hint {
+  font-size: 10px; color: var(--text-3); margin: 4px 0 0 0;
+  opacity: 0.7; line-height: 1.3;
+}
+
+.modal-footer {
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+  display: flex; justify-content: flex-end; gap: 7px;
+}
+
+.modal-btn {
+  padding: 7px 18px; border: none;
+  border-radius: var(--radius-sm);
+  font-size: 12px; font-weight: 600;
+  cursor: pointer; transition: all var(--trans);
+}
+
+.modal-btn.primary { background: var(--blue); color: white; }
+.modal-btn.primary:hover { background: #2563eb; }
+.modal-btn.secondary { background: transparent; color: var(--text-2); border: 1px solid var(--border-md); }
+.modal-btn.secondary:hover { background: var(--bg-hover); color: var(--text); }
+
+/* ══════════════════════════════════════
+   LOOKUP RESULTS COMPAT
+══════════════════════════════════════ */
+.lookup-results-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 10px; margin-bottom: 8px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 10px; font-weight: 700;
+  letter-spacing: 0.6px; color: var(--text-2);
+  text-transform: uppercase;
+}
+
+.lookup-results-count { font-size: 10px; font-weight: 500; color: var(--blue); letter-spacing: 0; text-transform: none; }
+.lookup-hint { font-size: 9px; font-weight: 500; color: var(--text-3); letter-spacing: 0; text-transform: none; font-style: italic; }
+
+.lookup-searching-banner {
+  display: flex; align-items: center; justify-content: center;
+  gap: 7px; padding: 14px;
+  font-size: 12px; color: var(--text-2);
+}
+
+.lookup-searching-dot {
+  display: inline-block; width: 7px; height: 7px;
+  border-radius: 50%; background: var(--blue);
+  animation: searching-pulse 1s ease-in-out infinite;
+}
+
+@keyframes searching-pulse {
+  0%, 100% { opacity: 0.3; transform: scale(0.8); }
+  50%       { opacity: 1;   transform: scale(1.2); }
+}
+
+/* ══════════════════════════════════════
+   TOAST
+══════════════════════════════════════ */
+.toast-container {
+  position: fixed; bottom: 16px; right: 16px;
+  display: flex; flex-direction: column; gap: 7px;
+  z-index: 2000; pointer-events: none;
+}
+
+.toast {
+  padding: 9px 14px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-md);
+  border-radius: var(--radius-sm);
+  color: var(--text-2); font-size: 12px;
+  pointer-events: auto;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  animation: toast-in 180ms ease-out;
+}
+
+.toast.success { border-color: rgba(232,64,74,0.3); color: var(--green); }
+.toast.error   { border-color: rgba(232,64,74,0.3);  color: var(--red);   }
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateX(12px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ══════════════════════════════════════
+   EMPTY STATES
+══════════════════════════════════════ */
+.empty-state-sm {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 60px;
+}
+
+.empty-state-sm p {
+  font-size: 11px;
+  color: var(--text-3);
+  text-align: center;
+  line-height: 1.5;
+}
+
+.empty-state-sm strong { color: var(--text-2); }
+
+/* JS-compat empty-state (section scroll containers) */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 80px;
+  gap: 8px;
+}
+
+.empty-hint {
+  font-size: 11px;
+  color: var(--text-3);
+  text-align: center;
+  line-height: 1.5;
+  max-width: 220px;
+}
+
+.empty-hint strong { color: var(--text-2); }
+
+/* ══════════════════════════════════════
+   ANIMATIONS
+══════════════════════════════════════ */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ══════════════════════════════════════
+   SCROLLBARS
+══════════════════════════════════════ */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-md); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-3); }
+
+/* ══════════════════════════════════════
+   HIDDEN / COMPAT
+══════════════════════════════════════ */
+.hidden-el {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+  width: 0;
+  height: 0;
+}
+
+.hidden { display: none !important; }
+
+/* (Old renderer.js compat aliases removed — .status-dot, .section-badge, .stats-*, .scripture-panel, .footer-bar, .main-content, .left-panel-old were all dead) */
+
+/* Platform rule consolidated above in TOP BAR section */
+
+/* ══════════════════════════════════════════════════════════════════
+   3-COLUMN LAYOUT  — Left Sidebar | Center Stage | Right Intelligence
+   These rules override the old 2-column right-panel layout.
+══════════════════════════════════════════════════════════════════ */
+
+.main-layout {
+  display: grid;
+  grid-template-columns: 300px 1fr 380px;
+  height: calc(100vh - var(--topbar-h));
+  overflow: hidden;
+}
+
+/* ── LEFT SIDEBAR ─────────────────────────────────────────────── */
+.left-sidebar {
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+  overflow: hidden;
+  min-height: 0;
+  padding: 10px;
+  gap: 8px;
+}
+
+.ls-status-bar {
+  flex-shrink: 0;
+  padding: 14px 14px 12px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-sm);
+}
+
+.ls-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.ls-section-label {
+  font-family: var(--font-head);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.ls-bcast-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+}
+
+.ls-bcast-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--text-3);
+  flex-shrink: 0;
+  transition: background 0.3s;
+}
+.ls-bcast-dot.broadcasting { background: var(--green); animation: dot-pulse 1.8s ease-in-out infinite; }
+
+.ls-bcast-label {
+  font-family: var(--font-head);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  transition: color 0.3s;
+}
+.ls-bcast-label.broadcasting { color: var(--green); }
+
+/* Compact 4-cell metrics bar */
+.ls-metrics-bar {
+  display: flex;
+  align-items: center;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.ls-metric {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 4px;
+  gap: 3px;
+}
+
+.ls-metric-divider {
+  width: 1px;
+  height: 28px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+.ls-metric-val {
+  font-family: var(--font-head);
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--text);
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+.ls-metric-green { color: var(--green) !important; }
+
+.ls-metric-lbl {
+  font-family: var(--font-head);
+  font-size: 8px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--text-3);
+}
+
+/* Transcript card — fills all remaining sidebar space */
+.ls-transcript-section {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-sm);
+}
+
+.ls-transcript-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 14px 8px;
+  border-bottom: 1px solid var(--border);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  flex-shrink: 0;
+  background: rgba(255,255,255,0.015);
+}
+
+.ls-icon-btn {
+  width: 24px; height: 24px;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-3);
+  cursor: pointer;
+  transition: all var(--trans);
+}
+.ls-icon-btn:hover { background: var(--bg-hover); color: var(--text-2); border-color: var(--border-md); }
+
+.ls-transcript-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 14px;
+  min-height: 0;
+}
+
+/* ── CENTER STAGE ─────────────────────────────────────────────── */
+.center-stage {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+  min-height: 0;
+  border-right: 1px solid var(--border);
+  padding: 10px;
+  gap: 8px;
+}
+
+/* Search / lookup bar — single row card */
+.cs-lookup {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-md);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-sm);
+}
+
+.cs-search-wrap {
+  flex: 1;
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.cs-search-input {
+  width: 100%;
+  height: 34px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 12px;
+  padding: 0 30px 0 12px;
+  outline: none;
+  transition: border-color var(--trans);
+}
+.cs-search-input:focus { border-color: var(--blue); }
+.cs-search-input::placeholder { color: var(--text-3); }
+
+.cs-search-clear {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px; height: 18px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg-hover);
+  border: none; border-radius: 3px;
+  color: var(--text-3); cursor: pointer;
+}
+
+.cs-search-btn {
+  width: 34px; height: 34px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--blue);
+  border: none; border-radius: var(--radius);
+  color: white; cursor: pointer; flex-shrink: 0;
+  transition: opacity var(--trans);
+}
+.cs-search-btn:hover { opacity: 0.85; }
+
+.cs-select {
+  height: 34px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--font-head);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 0 8px;
+  outline: none;
+  cursor: pointer;
+  transition: border-color var(--trans);
+}
+.cs-select:focus { border-color: var(--blue); }
+
+/* Translation select — compact, only shows the version abbreviation */
+.cs-translation-select {
+  width: 68px;
+  flex-shrink: 0;
+}
+
+/* cs-preview-section removed — viewer now lives in right sidebar */
+
+.cs-section-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 0; /* card sections use border-bottom + padding internally */
+}
+
+.cs-section-label {
+  font-family: var(--font-head);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.cs-on-air-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  background: var(--red-dim);
+  border: 1px solid rgba(232,64,74,0.3);
+  border-radius: 20px;
+  font-family: var(--font-head);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--red);
+}
+
+.cs-on-air-dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--red);
+  animation: dot-pulse 1.8s ease-in-out infinite;
+}
+
+/* Push sync toggle to the right */
+.cs-sync { margin-left: auto; }
+
+.cs-clear-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-3);
+  font-family: var(--font-head);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all var(--trans);
+}
+.cs-clear-btn:hover { background: rgba(232,64,74,0.1); border-color: var(--red); color: var(--red); }
+
+/* Live Queue card — fills all remaining center space */
+.cs-live-queue-section {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(232,64,74,0.22);
+  background: rgba(232,64,74,0.03);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Main variant (full-height) — scroll internally */
+.cs-live-queue-main {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.cs-auto-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  background: var(--green-dim);
+  border: 1px solid rgba(232,64,74,0.25);
+  border-radius: 20px;
+  font-family: var(--font-head);
+  font-size: 8.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--green);
+  margin-left: auto;
+}
+
+.cs-auto-dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--green);
+  flex-shrink: 0;
+}
+
+.cs-live-queue-body {
+  padding: 8px 12px 10px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+/* Scrollable full-height variant */
+.cs-live-queue-scroll {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+}
+
+.cs-queue-empty {
+  font-size: 11px;
+  font-weight: 300;
+  color: var(--text-3);
+  font-style: italic;
+  padding: 6px 0;
+}
+
+/* Live queue cards — compact horizontal rows */
+.cs-live-queue-body .locked-verse-card {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  margin-bottom: 0;
+  border-left: 3px solid var(--green);
+  background: rgba(232,64,74,0.05);
+  border-radius: var(--radius);
+  overflow: hidden;
+  cursor: default;
+}
+
+/* Hide noisy elements inside queue cards */
+.cs-live-queue-body .locked-verse-card .lvc-status  { display: none; }
+.cs-live-queue-body .locked-verse-card .conf-badge  { display: none; }
+
+/* Ref — tight, single line */
+.cs-live-queue-body .locked-verse-card .lvc-ref {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--green);
+  padding-right: 0;
+  margin-bottom: 2px;
+  white-space: nowrap;
+  letter-spacing: -0.01em;
+}
+
+/* Text — 1 line, italic, muted */
+.cs-live-queue-body .locked-verse-card .lvc-text {
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 1.35;
+  color: var(--text-2);
+  font-style: italic;
+  margin-bottom: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Push send button to far right */
+.cs-live-queue-body .locked-verse-card .lvc-actions {
+  flex-shrink: 0;
+  margin-left: auto;
+  align-self: center;
+}
+
+.cs-live-queue-body .locked-verse-card .lvc-send-btn {
+  padding: 3px 8px;
+  font-size: 9px;
+  font-weight: 700;
+  white-space: nowrap;
+  background: rgba(232,64,74,0.1);
+  color: var(--green);
+  border: 1px solid rgba(232,64,74,0.3);
+  border-radius: var(--radius-sm);
+}
+.cs-live-queue-body .locked-verse-card .lvc-send-btn:hover {
+  background: var(--green);
+  color: #000;
+  border-color: var(--green);
+}
+
+/* Promote button — hide in queue, no need for it there */
+.cs-live-queue-body .locked-verse-card .lvc-promote-btn { display: none; }
+
+/* History section */
+.cs-history-section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+  padding: 0; /* card override handles padding */
+}
+
+/* Single-column history grid — full width cards */
+.history-grid {
+  flex: 1;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-auto-rows: min-content;
+  gap: 6px;
+  align-content: start;
+  min-height: 0;
+  padding-bottom: 4px;
+}
+
+.history-grid .display-empty {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 28px;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+/* Compact horizontal card inside the history grid */
+.history-grid .locked-verse-card {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 10px 10px 10px;
+  margin-bottom: 0;
+  border-left: none;
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  transition: border-color 0.15s, background 0.15s;
+  overflow: hidden;
+  cursor: default;
+  min-width: 0;
+}
+.history-grid .locked-verse-card:hover {
+  border-color: rgba(59,130,246,0.3);
+  background: var(--bg-hover);
+  transform: none;
+}
+
+/* Hide status dot and conf badge in compact mode */
+.history-grid .locked-verse-card .lvc-status { display: none; }
+.history-grid .locked-verse-card .conf-badge { display: none; }
+
+/* Reference text compact */
+.history-grid .locked-verse-card .lvc-ref {
+  font-family: var(--font-head);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+  padding-right: 0;
+  margin-bottom: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: -0.01em;
+}
+
+/* Verse text compact — 2-line clamp */
+.history-grid .locked-verse-card .lvc-text {
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 1.4;
+  color: var(--text-2);
+  font-style: normal;
+  margin-bottom: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Push send button to the right */
+.history-grid .locked-verse-card .lvc-actions {
+  flex-shrink: 0;
+  margin-left: auto;
+  align-self: center;
+}
+
+.history-grid .locked-verse-card .lvc-send-btn {
+  padding: 4px 8px;
+  font-size: 9px;
+  font-weight: 700;
+  white-space: nowrap;
+  background: rgba(255,255,255,0.04);
+  color: var(--text-2);
+  border: 1px solid var(--border-md);
+}
+.history-grid .locked-verse-card .lvc-send-btn:hover { background: var(--blue); color: #fff; border-color: var(--blue); }
+
+/* Book abbreviation badge inside history card */
+.history-book-badge {
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: var(--font-head);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--blue);
+}
+
+.history-card-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── RIGHT SIDEBAR ────────────────────────────────────────────── */
+.right-sidebar {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  overflow: hidden;
+  min-height: 0;
+  padding: 10px;
+  gap: 8px;
+}
+
+/* ProPresenter sync bar — card */
+.rs-pp-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  flex-shrink: 0;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-md);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-sm);
+}
+
+.rs-pp-label {
+  font-family: var(--font-head);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--text-2);
+  flex: 1;
+}
+
+.rs-pp-status {
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--text-3);
+  font-family: var(--mono);
+}
+
+.rs-section {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* Candidates — fills all vertical space in right sidebar */
+.rs-candidates {
+  flex: 1;
+}
+
+.rs-section-hdr {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px 9px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.rs-section-hdr--green { border-bottom-color: rgba(232,64,74,0.15); }
+.rs-section-hdr--green .rs-section-title { color: var(--green); }
+
+.rs-section-title {
+  font-family: var(--font-head);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.rs-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-family: var(--font-head);
+  font-size: 8.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.rs-badge--green {
+  background: var(--green-dim);
+  color: var(--green);
+  border: 1px solid rgba(232,64,74,0.25);
+}
+
+.rs-badge--neutral {
+  background: var(--bg-card);
+  color: var(--text-3);
+  border: 1px solid var(--border);
+}
+
+.rs-badge-dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.rs-count-badge {
+  margin-left: auto;
+  font-family: var(--font-head);
+  font-size: 9px;
+  font-weight: 700;
+  background: var(--blue-dim);
+  color: var(--blue);
+  border: 1px solid rgba(59,130,246,0.2);
+  border-radius: 10px;
+  padding: 1px 7px;
+  min-width: 20px;
+  text-align: center;
+}
+
+.rs-clear-btn {
+  width: 22px; height: 22px;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-3);
+  cursor: pointer;
+  transition: all var(--trans);
+  margin-left: 2px;
+}
+.rs-clear-btn:hover { background: rgba(232,64,74,0.1); border-color: var(--red); color: var(--red); }
+
+.rs-empty-state {
+  padding: 18px 14px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-3);
+  font-style: italic;
+}
+
+.rs-live-queue-body {
+  overflow-y: auto;
+  padding: 10px 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Sent cards inside the live queue get green highlight */
+.rs-live-queue-body .locked-verse-card {
+  border-color: rgba(232,64,74,0.3);
+  background: rgba(232,64,74,0.04);
+}
+.rs-live-queue-body .locked-verse-card:hover {
+  border-color: rgba(232,64,74,0.5);
+  background: rgba(232,64,74,0.07);
+}
+
+.rs-candidates-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 12px;
+  min-height: 0;
+}
+
+/* Topic chips inside right sidebar */
+.rs-candidates .topic-chips-section {
+  margin: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  flex-shrink: 0;
+  padding: 10px 12px;
+}
+
+/* Transcript spans rendered by JS inside ls-transcript-body */
+.ls-transcript-body .transcript-text   { font-size: 12.5px; font-weight: 400; line-height: 1.65; color: var(--text); -webkit-user-select: text; user-select: text; }
+.ls-transcript-body .transcript-final  { font-size: 12.5px; font-weight: 400; line-height: 1.65; color: var(--text-2); -webkit-user-select: text; user-select: text; }
+.ls-transcript-body .transcript-interim{ font-size: 12.5px; font-weight: 300; line-height: 1.65; color: var(--text-3); font-style: italic; -webkit-user-select: text; user-select: text; }
+
+/* ── Range navigation bar — docked below the live screen ──────── */
+.range-nav-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  background: rgba(59,130,246,0.08);
+  border-top: 1px solid rgba(59,130,246,0.2);
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.range-nav-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.range-nav-icon {
+  color: var(--blue);
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+
+.range-nav-label {
+  font-family: var(--font-head);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #93c5fd;
+  flex-shrink: 0;
+}
+
+.range-nav-ref {
+  font-family: var(--font-head);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.range-nav-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.range-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid;
+  font-family: var(--font-head);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background var(--trans), color var(--trans);
+  -webkit-app-region: no-drag;
+}
+
+.range-nav-next {
+  background: var(--blue);
+  color: #fff;
+  border-color: var(--blue);
+}
+.range-nav-next:hover { background: #2563eb; border-color: #2563eb; }
+
+.range-nav-clear {
+  background: transparent;
+  color: var(--text-3);
+  border-color: var(--border-md);
+  padding: 5px 8px;
+}
+.range-nav-clear:hover { color: var(--red); border-color: var(--red); }
+
+/* ── Range verse cards ─────────────────────────────────────────── */
+.range-verse-card {
+  transition: background var(--trans), border-color var(--trans), opacity var(--trans);
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Active verse in range — bright left accent + subtle glow */
+.range-verse-card.range-active {
+  border-left: 3px solid var(--blue);
+  background: rgba(59,130,246,0.08);
+  opacity: 1;
+}
+.range-verse-card.range-active .lvc-ref { color: #93c5fd; }
+
+/* Queued (not yet spoken) — dimmed */
+.range-verse-card.range-queued {
+  border-left: 3px solid var(--border-md);
+  opacity: 0.55;
+}
+.range-verse-card.range-queued:hover { opacity: 0.85; }
+
+/* Range book badge — subtle blue tint to distinguish from normal history */
+.range-book-badge {
+  background: rgba(59,130,246,0.15) !important;
+  color: #93c5fd !important;
+  border-color: rgba(59,130,246,0.3) !important;
+}
+
+/* ── Purpose-built candidate card (no inheritance conflicts) ────────────── */
+.cand-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 7px 10px 7px 10px;
+  margin-bottom: 5px;
+  position: relative;
+  -webkit-user-select: none;
+  user-select: none;
+  transition: border-color 0.12s;
+}
+.cand-card:hover { border-color: rgba(59,130,246,0.35); }
+.cand-sent {
+  border-left: 2px solid rgba(232,64,74,0.5);
+  background: rgba(232,64,74,0.025);
+}
+.cand-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 3px;
+}
+.cand-ref {
+  font-family: var(--font-head);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+.cand-sent .cand-ref { color: var(--green); }
+.cand-badge {
+  font-family: var(--font-head);
+  font-size: 8px;
+  font-weight: 800;
+  border-radius: 4px;
+  padding: 1px 5px;
+  letter-spacing: 0.04em;
+  line-height: 1.4;
+  flex-shrink: 0;
+}
+.cand-text {
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 1.4;
+  color: var(--text-2);
+  font-style: italic;
+  margin-bottom: 6px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.cand-actions {
+  display: flex;
+  gap: 4px;
+}
+.cand-send {
+  flex: 1;
+  font-family: var(--font-head);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 3px 0;
+  background: var(--blue);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: opacity 0.12s;
+}
+.cand-send:hover { opacity: 0.85; }
+.cand-promote {
+  font-family: var(--font-head);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 3px 10px;
+  background: transparent;
+  color: var(--text-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s;
+}
+.cand-promote:hover { color: var(--text); border-color: var(--text-3); }
+
+/* Auto-sent record in candidates — green left accent */
+.rs-candidates-body .candidate-sent {
+  border-left: 2px solid rgba(232,64,74,0.5) !important;
+  background: rgba(232,64,74,0.03) !important;
+}
+.rs-candidates-body .candidate-sent .lvc-ref { color: var(--green) !important; }
+
+/* Compact locked-verse-card when inside candidates (auto-sent records) */
+.rs-candidates-body .locked-verse-card {
+  padding: 7px 10px;
+  margin-bottom: 5px;
+}
+.rs-candidates-body .locked-verse-card .lvc-ref {
+  font-size: 11px;
+  margin-bottom: 2px;
+  line-height: 1.2;
+}
+.rs-candidates-body .locked-verse-card .lvc-text {
+  font-size: 10px;
+  line-height: 1.4;
+  margin-bottom: 5px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.rs-candidates-body .locked-verse-card .lvc-send-btn {
+  padding: 3px 0;
+  font-size: 9px;
+}
+
+/* ── Compact candidate cards ─────────────────────────────────────────────── */
+.rs-candidates-body .suggestion-card {
+  padding: 7px 10px 7px 10px;
+  margin-bottom: 5px;
+  position: relative;
+}
+.rs-candidates-body .suggestion-card .lvc-status {
+  display: none;
+}
+.rs-candidates-body .suggestion-card .lvc-ref {
+  font-size: 11px;
+  font-weight: 700;
+  margin-bottom: 2px;
+  padding-right: 46px;
+  line-height: 1.2;
+}
+.rs-candidates-body .suggestion-card .lvc-text {
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 1.4;
+  margin-bottom: 6px;
+  /* Clamp to 2 lines */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.rs-candidates-body .suggestion-card .conf-badge {
+  font-size: 8px;
+  padding: 1px 5px;
+  top: 7px;
+  right: 8px;
+}
+.rs-candidates-body .suggestion-card .lvc-actions {
+  display: flex;
+  flex-direction: row;
+  gap: 4px;
+  margin-top: 0;
+}
+.rs-candidates-body .suggestion-card .lvc-send-btn {
+  flex: 1;
+  padding: 3px 0;
+  font-size: 9px;
+  letter-spacing: 0.05em;
+}
+.rs-candidates-body .suggestion-card .lvc-promote-btn {
+  padding: 3px 10px;
+  font-size: 9px;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   ROUNDED CARDS LAYOUT
+   Each panel section becomes a distinct card with breathing room.
+══════════════════════════════════════════════════════════════════ */
+
+/* HTML order is: search → live queue */
+
+/* Viewer now lives in right sidebar — rs-preview-card */
+.rs-preview-card {
+  flex-shrink: 0;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-md);
+  background: var(--bg-panel);
+  overflow: hidden;
+  box-shadow: var(--shadow-md);
+}
+
+.rs-preview-card .live-screen {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  height: auto;
+  border-radius: 0;
+  border: none;
+}
+
+.range-nav-bar {
+  border-radius: 0;
+}
+
+.cs-live-queue-section .cs-section-header {
+  border-bottom: 1px solid rgba(232,64,74,0.12);
+  margin-bottom: 0;
+  padding: 9px 14px 9px;
+  flex-shrink: 0;
+}
+
+.cs-live-queue-section .cs-live-queue-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 14px 12px;
+}
+
+/* History card ── */
+.cs-history-section {
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  padding: 0;
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+
+.cs-history-section .cs-section-header {
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0;
+}
+
+.cs-history-section .history-grid {
+  padding: 10px 12px 12px;
+}
+
+/* Candidates section → card */
+.rs-section.rs-candidates {
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+
+.rs-section.rs-candidates .rs-section-hdr {
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+
+/* (Duplicate .ls-status-bar merged into definition above) */
+
+/* (Duplicate .ls-transcript-section, .ls-transcript-header merged into definitions above) */

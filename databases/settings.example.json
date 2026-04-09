@@ -1,0 +1,8 @@
+{
+  "deepgramApiKey": "YOUR_DEEPGRAM_API_KEY",
+  "proPresenterUrl": "http://localhost:1025",
+  "translation": "KJV",
+  "ppSwapTokenOrder": false,
+  "autoSend": true,
+  "showConfidence": true
+}

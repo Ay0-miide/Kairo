@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+server/node_modules/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Sensitive config — never commit API keys
+databases/settings.json
+
+# Large binary / model files
+databases/logos/ivf.faiss
+databases/logos/verses.bin
+databases/logos/map.json
+databases/logos/kjv.json
+databases/logos/model/
+
+# Tauri build output
+src-tauri/target/
+
+# Logs
+*.log
+logs/
+
+# Environment files
+.env
+.env.*

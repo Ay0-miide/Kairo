@@ -1,0 +1,7 @@
+{
+  "watch": ["server.js", "detection_worker.js", "reference_parser.js"],
+  "ext": "js",
+  "delay": 1000,
+  "ignore": ["*.log", "*.sqlite", "*.json", "node_modules/"],
+  "restartable": "rs"
+}
