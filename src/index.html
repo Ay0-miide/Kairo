@@ -15,34 +15,50 @@
     ═══════════════════════════════════════════════════════ -->
     <div class="top-bar">
         <div class="top-bar-left">
-            <span class="app-logo">KAIRO</span>
-            <div class="pill pill-red">
-                <span class="pill-dot"></span>
-                ON AIR
-            </div>
-            <span class="fps-counter" id="fps-counter">59 FPS</span>
+            <span class="app-logo">
+                <svg class="app-logo-icon" width="18" height="18" viewBox="0 0 24 24" fill="none">
+                    <path d="M12 2C8 6 6 9 6 13a6 6 0 0 0 12 0c0-4-2-7-6-11z" fill="var(--red)" opacity="0.9"/>
+                    <path d="M12 8c-2 2.5-3 4.5-3 6a3 3 0 0 0 6 0c0-1.5-1-3.5-3-6z" fill="var(--red)"/>
+                </svg>
+                KAIRO
+            </span>
         </div>
-        <div class="top-bar-center">
-            <div class="pill pill-green">
-                <span class="pill-dot pulse"></span>
-                Mic Live
-            </div>
-            <span class="mic-label" id="mic-display">Select a microphone</span>
-        </div>
+
+        <div class="top-bar-center"></div>
+
+        <!-- hidden elapsed time for JS compatibility -->
+        <span id="elapsed-time" style="display:none;"></span>
+
         <div class="top-bar-right">
-            <span class="sermon-title" id="sermon-title" contenteditable="true" spellcheck="false">Untitled Sermon</span>
-            <span class="elapsed-badge"><span id="elapsed-time">0:00</span></span>
+            <button id="looks-btn" class="tb-studio-btn" title="Theme Studio — design your output display">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="13.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="13.5" r="2.5"/><circle cx="8.5" cy="13.5" r="2.5"/>
+                    <path d="M12 21a9 9 0 1 1 0-18"/>
+                </svg>
+                <span>Theme Studio</span>
+            </button>
+            <button id="output-preview-btn" class="tb-icon-btn" title="Output preview">
+                <!-- monitor icon -->
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="2" y="3" width="20" height="14" rx="2"/>
+                    <line x1="8" y1="21" x2="16" y2="21"/>
+                    <line x1="12" y1="17" x2="12" y2="21"/>
+                </svg>
+            </button>
+            <div class="tb-divider"></div>
+            <span class="mic-label" id="mic-display">No mic selected</span>
             <button id="listen-btn" class="tb-listen-btn">
                 <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><rect x="1" y="1" width="8" height="8" rx="1.5"/></svg>
                 <span class="listen-text">Start Listening</span>
             </button>
-            <button id="export-btn" class="tb-btn" title="Export">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            <div class="tb-divider"></div>
+            <button id="export-btn" class="tb-icon-btn" title="Export session">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             </button>
-            <button id="settings-btn" class="tb-btn" title="Settings">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            <button id="settings-btn" class="tb-icon-btn" title="Settings">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
             </button>
-            <!-- Window controls: hidden on macOS (native traffic lights used instead) -->
+            <!-- Window controls: hidden on macOS -->
             <div class="window-controls">
                 <button id="minimize-btn" class="win-btn" aria-label="Minimize">
                     <svg width="10" height="10" viewBox="0 0 12 12"><line x1="2" y1="6" x2="10" y2="6" stroke="currentColor" stroke-width="1.5"/></svg>
@@ -247,6 +263,99 @@
     <select id="audio-source" class="hidden-el"><option value="">Select a microphone...</option></select>
     <input type="checkbox" id="show-confidence-checkbox" class="hidden-el" checked>
 
+    <!-- ═══ THEME STUDIO MODAL ═══ -->
+    <div id="looks-modal" class="modal hidden">
+        <div class="modal-overlay"></div>
+        <div class="modal-content ts-modal">
+            <div class="modal-header">
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <h2>Theme Studio</h2>
+                    <span style="font-size:10px;color:var(--text-3);font-weight:400;">Layer-based display design</span>
+                </div>
+                <button id="close-looks" class="modal-close-btn">
+                    <svg width="16" height="16" viewBox="0 0 16 16"><path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                </button>
+            </div>
+
+            <div class="ts-body">
+
+                <!-- Col 1: Theme list -->
+                <div class="ts-themes-col">
+                    <div class="ts-col-header">
+                        <span class="ts-col-label">Themes</span>
+                        <button id="new-look-btn" class="ts-icon-btn" title="New theme">
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                        </button>
+                    </div>
+                    <div class="ts-themes-list" id="looks-list"></div>
+                </div>
+
+                <!-- Col 2: Preview + Layers -->
+                <div class="ts-center-col">
+
+                    <!-- Preview stage -->
+                    <div class="ts-preview-wrap">
+                        <div class="ts-preview-stage" id="looks-preview-stage">
+                            <!-- layers rendered here by JS -->
+                        </div>
+                    </div>
+
+                    <!-- Layout + Animation row -->
+                    <div class="ts-meta-row">
+                        <div class="ts-meta-group">
+                            <span class="ts-meta-label">Layout</span>
+                            <div class="ts-chip-group" id="ts-layout-picker">
+                                <button class="ts-chip active" data-layout="fullscreen">Fullscreen</button>
+                                <button class="ts-chip" data-layout="lower-third">Lower Third</button>
+                                <button class="ts-chip" data-layout="ticker">Ticker</button>
+                            </div>
+                        </div>
+                        <div class="ts-meta-group">
+                            <span class="ts-meta-label">Transition</span>
+                            <div class="ts-chip-group" id="ts-anim-picker">
+                                <button class="ts-chip active" data-anim="fade">Fade</button>
+                                <button class="ts-chip" data-anim="slide-up">Slide</button>
+                                <button class="ts-chip" data-anim="cut">Cut</button>
+                            </div>
+                        </div>
+                        <input type="text" id="look-name-input" class="ts-name-input" placeholder="Theme name…">
+                    </div>
+
+                    <!-- Layers panel -->
+                    <div class="ts-layers-panel">
+                        <div class="ts-layers-header">
+                            <span class="ts-col-label">Layers</span>
+                            <button id="ts-add-layer-btn" class="ts-icon-btn" title="Add text layer">
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                            </button>
+                        </div>
+                        <div class="ts-layers-list" id="ts-layers-list"></div>
+                    </div>
+
+                </div>
+
+                <!-- Col 3: Properties panel -->
+                <div class="ts-props-col" id="ts-props-col">
+                    <div class="ts-props-empty" id="ts-props-empty">
+                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" opacity="0.3"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="9" x2="15" y2="9"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="12" y2="17"/></svg>
+                        <span>Select a layer<br>to edit its properties</span>
+                    </div>
+                    <!-- Properties injected by JS -->
+                    <div id="ts-props-panel" style="display:none;"></div>
+                </div>
+
+            </div>
+
+            <div class="modal-footer" style="justify-content:space-between;">
+                <button id="delete-look-btn" class="modal-btn secondary" style="color:var(--red);border-color:rgba(232,64,74,0.3);">Delete Theme</button>
+                <div style="display:flex;gap:8px;">
+                    <button id="apply-look-btn" class="modal-btn secondary">Apply to Outputs</button>
+                    <button id="save-look-btn" class="modal-btn primary">Save Theme</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Settings Modal (JS-compatible IDs) -->
     <div id="settings-modal" class="modal hidden">
         <div class="modal-overlay"></div>
@@ -258,71 +367,203 @@
                 </button>
             </div>
             <div class="modal-body">
-                <div class="setting-group">
-                    <label class="setting-label">Deepgram API Key</label>
-                    <input type="password" id="deepgram-key" class="setting-input" placeholder="dg_...">
-                </div>
-                <div class="setting-group">
-                    <label class="setting-label">Speech Engine</label>
-                    <div class="toggle-group" id="speech-engine-toggle">
-                        <button class="toggle-btn active" data-engine="deepgram">Deepgram</button>
-                        <button class="toggle-btn" data-engine="browser">Browser (Free)</button>
+            <div class="settings-col-left">
+
+                <!-- ── AUDIO ─────────────────────────────────────── -->
+                <div class="settings-section">
+                    <div class="settings-section-label">Audio</div>
+
+                    <div class="setting-group">
+                        <label class="setting-label">Deepgram API Key</label>
+                        <input type="password" id="deepgram-key" class="setting-input" placeholder="dg_...">
+                    </div>
+
+                    <div class="setting-group">
+                        <label class="setting-label">Speech Engine</label>
+                        <div class="toggle-group" id="speech-engine-toggle">
+                            <button class="toggle-btn active" data-engine="deepgram">Deepgram</button>
+                            <button class="toggle-btn" data-engine="browser">Browser (Free)</button>
+                        </div>
+                    </div>
+
+                    <div class="setting-group">
+                        <label class="setting-label">Audio Input</label>
+                        <div class="toggle-group" id="audio-mode-toggle">
+                            <button class="toggle-btn active" data-mode="mic">🎙 Mic</button>
+                            <button class="toggle-btn" data-mode="line-in">🔌 Line In</button>
+                        </div>
+                        <p class="setting-hint" id="audio-mode-hint">Built-in or USB microphone with noise suppression</p>
+                    </div>
+
+                    <div class="setting-group">
+                        <label class="setting-label">Audio Source</label>
+                        <div style="display:flex;gap:6px;align-items:center;">
+                            <select id="audio-source-settings" class="setting-input" style="flex:1;">
+                                <option value="">Loading devices...</option>
+                            </select>
+                            <button id="refresh-devices-settings" class="modal-btn secondary" style="white-space:nowrap;font-size:11px;">↻</button>
+                        </div>
                     </div>
                 </div>
-                <div class="setting-group">
-                    <label class="setting-label">Audio Input</label>
-                    <div class="toggle-group" id="audio-mode-toggle">
-                        <button class="toggle-btn active" data-mode="mic">🎙 Mic</button>
-                        <button class="toggle-btn" data-mode="line-in">🔌 Line In</button>
-                    </div>
-                    <p class="setting-hint" id="audio-mode-hint">Built-in or USB microphone with noise suppression</p>
-                </div>
-                <div class="setting-group">
-                    <label class="setting-label">Audio Source</label>
-                    <div style="display:flex;gap:6px;align-items:center;">
-                        <select id="audio-source-settings" class="setting-input" style="flex:1;">
-                            <option value="">Loading devices...</option>
+
+                <!-- ── BIBLE ──────────────────────────────────────── -->
+                <div class="settings-section">
+                    <div class="settings-section-label">Bible</div>
+
+                    <div class="setting-group">
+                        <label class="setting-label">Translation</label>
+                        <select id="translation-select-settings" class="setting-input">
+                            <option value="KJV" selected>KJV</option>
+                            <option value="NIV">NIV</option>
+                            <option value="NLT">NLT</option>
+                            <option value="ESV">ESV</option>
+                            <option value="NASB">NASB</option>
+                            <option value="NKJV">NKJV</option>
                         </select>
-                        <button id="refresh-devices-settings" class="modal-btn secondary" style="white-space:nowrap;font-size:11px;">↻</button>
+                    </div>
+
+                    <div class="setting-group">
+                        <label class="bs-check-label">
+                            <input type="checkbox" id="auto-send-settings" checked>
+                            Auto-send high confidence verses
+                        </label>
+                        <label class="bs-check-label">
+                            <input type="checkbox" id="show-confidence-settings" checked>
+                            Show confidence scores
+                        </label>
                     </div>
                 </div>
-                <div class="setting-group">
-                    <label class="setting-label">ProPresenter URL</label>
-                    <div style="display:flex;gap:6px;">
-                        <input type="text" id="propresenter-url" class="setting-input" value="http://localhost:1025" style="flex:1;">
-                        <button id="test-propresenter-btn" class="modal-btn secondary" style="white-space:nowrap;">Test</button>
+
+            </div><!-- /settings-col-left -->
+            <div class="settings-col-right">
+
+                <!-- ── OUTPUTS ────────────────────────────────────── -->
+                <div class="settings-section">
+                    <div class="settings-section-label">Outputs</div>
+
+                    <!-- Card 1: ProPresenter -->
+                    <div class="output-card" id="card-propresenter">
+                        <div class="output-card-header" data-card="propresenter">
+                            <label class="output-toggle" title="Enable ProPresenter output">
+                                <input type="checkbox" id="pp-enabled-toggle" checked>
+                                <span class="output-toggle-track"></span>
+                            </label>
+                            <span class="output-card-name">ProPresenter</span>
+                            <span class="output-card-chevron">▾</span>
+                        </div>
+                        <div class="output-card-body">
+                            <div class="setting-group">
+                                <label class="setting-label">URL</label>
+                                <div style="display:flex;gap:6px;">
+                                    <input type="text" id="propresenter-url" class="setting-input" value="http://localhost:1025" style="flex:1;">
+                                    <button id="test-propresenter-btn" class="modal-btn secondary" style="white-space:nowrap;">Test</button>
+                                </div>
+                            </div>
+                            <div class="setting-group">
+                                <label class="setting-label">PP Text Token Order</label>
+                                <div style="display:flex;gap:8px;align-items:center;">
+                                    <span id="pp-token-order-label" style="font-size:12px;color:var(--text-2);flex:1;">Token[0] = Verse Text &nbsp;·&nbsp; Token[1] = Reference</span>
+                                    <button id="swap-pp-tokens-btn" class="modal-btn secondary" style="white-space:nowrap;font-size:11px;">⇄ Swap</button>
+                                </div>
+                                <div style="font-size:11px;color:var(--text-3);margin-top:4px;">If reference and text appear on the wrong layer in PP, click Swap.</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Card 2: OBS WebSocket -->
+                    <div class="output-card" id="card-obs">
+                        <div class="output-card-header" data-card="obs">
+                            <label class="output-toggle" title="Enable OBS WebSocket output">
+                                <input type="checkbox" id="obs-enabled-toggle">
+                                <span class="output-toggle-track"></span>
+                            </label>
+                            <span class="output-card-name">OBS WebSocket</span>
+                            <span class="output-card-chevron">▾</span>
+                        </div>
+                        <div class="output-card-body output-card-body--collapsed">
+                            <div class="setting-group">
+                                <label class="setting-label">URL</label>
+                                <input type="text" id="obs-url" class="setting-input" placeholder="ws://localhost:4455">
+                            </div>
+                            <div class="setting-group">
+                                <label class="setting-label">Password</label>
+                                <input type="password" id="obs-password" class="setting-input" placeholder="Leave blank if no password">
+                            </div>
+                            <div class="setting-group">
+                                <label class="setting-label">Text Source Name</label>
+                                <input type="text" id="obs-text-source" class="setting-input" placeholder="Scripture">
+                            </div>
+                            <div style="display:flex;align-items:center;gap:8px;">
+                                <button id="test-obs-btn" class="modal-btn secondary">Test</button>
+                                <span id="obs-status" style="font-size:11px;color:var(--text-2);"></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Card 3: Syphon -->
+                    <div class="output-card" id="card-syphon">
+                        <div class="output-card-header" data-card="syphon">
+                            <label class="output-toggle" title="Enable Syphon output">
+                                <input type="checkbox" id="syphon-enabled-toggle">
+                                <span class="output-toggle-track"></span>
+                            </label>
+                            <span class="output-card-name">Syphon</span>
+                            <span class="output-card-chevron">▾</span>
+                        </div>
+                        <div class="output-card-body output-card-body--collapsed">
+                            <div class="setting-group">
+                                <label class="setting-label">Layout</label>
+                                <div class="toggle-group" id="syphon-layout-toggle">
+                                    <button class="toggle-btn active" data-layout="fullscreen">Fullscreen</button>
+                                    <button class="toggle-btn" data-layout="lower-third">Lower Third</button>
+                                </div>
+                            </div>
+                            <div class="setting-group" id="syphon-opacity-group" style="display:none;">
+                                <label class="setting-label">Background Opacity</label>
+                                <div style="display:flex;align-items:center;gap:10px;">
+                                    <input type="range" id="syphon-bg-opacity" min="0" max="100" value="80" style="flex:1;">
+                                    <span id="syphon-opacity-label" style="font-size:11px;color:var(--text-2);min-width:30px;">80%</span>
+                                </div>
+                            </div>
+                            <button id="open-syphon-btn" class="modal-btn secondary" style="width:100%;justify-content:center;">Open Syphon Window</button>
+                            <p class="setting-hint">Open this window in any Syphon-compatible app (e.g. OBS, Resolume, MadMapper) to use as a source.</p>
+                        </div>
+                    </div>
+
+                    <!-- Card 4: External Display -->
+                    <div class="output-card" id="card-external">
+                        <div class="output-card-header" data-card="external">
+                            <label class="output-toggle" title="Enable External Display output">
+                                <input type="checkbox" id="external-enabled-toggle">
+                                <span class="output-toggle-track"></span>
+                            </label>
+                            <span class="output-card-name">External Display</span>
+                            <span class="output-card-chevron">▾</span>
+                        </div>
+                        <div class="output-card-body output-card-body--collapsed">
+                            <div class="setting-group">
+                                <label class="setting-label">Layout</label>
+                                <div class="toggle-group" id="external-layout-toggle">
+                                    <button class="toggle-btn active" data-layout="fullscreen">Fullscreen</button>
+                                    <button class="toggle-btn" data-layout="lower-third">Lower Third</button>
+                                </div>
+                            </div>
+                            <div class="setting-group" id="external-opacity-group" style="display:none;">
+                                <label class="setting-label">Background Opacity</label>
+                                <div style="display:flex;align-items:center;gap:10px;">
+                                    <input type="range" id="external-bg-opacity" min="0" max="100" value="80" style="flex:1;">
+                                    <span id="external-opacity-label" style="font-size:11px;color:var(--text-2);min-width:30px;">80%</span>
+                                </div>
+                            </div>
+                            <button id="open-external-btn" class="modal-btn secondary" style="width:100%;justify-content:center;">Open on External Display</button>
+                            <p class="setting-hint">The display window opens on your secondary screen. Move it there and press F for fullscreen if needed.</p>
+                        </div>
                     </div>
                 </div>
-                <div class="setting-group">
-                    <label class="setting-label">PP Text Token Order</label>
-                    <div style="display:flex;gap:8px;align-items:center;">
-                        <span id="pp-token-order-label" style="font-size:12px;color:var(--text-secondary);flex:1;">Token[0] = Verse Text &nbsp;·&nbsp; Token[1] = Reference</span>
-                        <button id="swap-pp-tokens-btn" class="modal-btn secondary" style="white-space:nowrap;font-size:11px;">⇄ Swap</button>
-                    </div>
-                    <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">If reference and text appear on the wrong layer in PP, click Swap.</div>
-                </div>
-                <div class="setting-group">
-                    <label class="setting-label">Bible Translation</label>
-                    <select id="translation-select-settings" class="setting-input">
-                        <option value="KJV" selected>KJV</option>
-                        <option value="NIV">NIV</option>
-                        <option value="NLT">NLT</option>
-                        <option value="ESV">ESV</option>
-                        <option value="NASB">NASB</option>
-                        <option value="NKJV">NKJV</option>
-                    </select>
-                </div>
-                <div class="setting-group">
-                    <label class="bs-check-label">
-                        <input type="checkbox" id="auto-send-settings" checked>
-                        Auto-send high confidence verses
-                    </label>
-                    <label class="bs-check-label">
-                        <input type="checkbox" id="show-confidence-settings" checked>
-                        Show confidence scores
-                    </label>
-                </div>
-            </div>
+
+            </div><!-- /settings-col-right -->
+
+            </div><!-- /modal-body -->
             <div class="modal-footer">
                 <button id="cancel-settings" class="modal-btn secondary">Cancel</button>
                 <button id="save-settings" class="modal-btn primary">Save</button>
@@ -345,6 +586,128 @@
 
     <!-- Toast Container -->
     <div id="toast-container" class="toast-container"></div>
+
+    <!-- Output card collapse / expand + display window -->
+    <script>
+    (function () {
+        // Collapsible output cards
+        document.querySelectorAll('.output-card-header').forEach(function (header) {
+            var card = header.closest('.output-card');
+            var toggle = card.querySelector('.output-toggle input[type="checkbox"]');
+
+            // Sync initial open state: expand card if its toggle is checked
+            if (toggle && toggle.checked) {
+                card.classList.add('expanded');
+            }
+
+            header.addEventListener('click', function (e) {
+                // If user clicked the toggle switch itself, let the checkbox change fire first
+                if (e.target === toggle || e.target.classList.contains('output-toggle-track')) return;
+                card.classList.toggle('expanded');
+            });
+
+            // When the enable toggle changes, auto-expand the card
+            if (toggle) {
+                toggle.addEventListener('change', function () {
+                    if (toggle.checked) {
+                        card.classList.add('expanded');
+                    }
+                });
+            }
+        });
+
+        // Layout toggles — show/hide opacity slider for lower-third
+        ['syphon', 'external'].forEach(function(prefix) {
+            var group = document.getElementById(prefix + '-layout-toggle');
+            var opacityGroup = document.getElementById(prefix + '-opacity-group');
+            if (!group) return;
+            group.querySelectorAll('.toggle-btn').forEach(function(btn) {
+                btn.addEventListener('click', function() {
+                    group.querySelectorAll('.toggle-btn').forEach(function(b) { b.classList.remove('active'); });
+                    btn.classList.add('active');
+                    if (opacityGroup) opacityGroup.style.display = btn.dataset.layout === 'lower-third' ? '' : 'none';
+                });
+            });
+            // Opacity label sync
+            var slider = document.getElementById(prefix + '-bg-opacity');
+            var label  = document.getElementById(prefix + '-opacity-label');
+            if (slider && label) {
+                slider.addEventListener('input', function() { label.textContent = slider.value + '%'; });
+            }
+        });
+
+        // ── Display window helper ──────────────────────────────────────────
+        // In Tauri, window.open() routes to the system browser — we must use
+        // the Tauri WebviewWindow API instead.  Outside Tauri (plain browser /
+        // dev server) we fall back to the normal window.open() path.
+        async function openDisplayWindow(label, url, opts) {
+            if (window.__TAURI__) {
+                try {
+                    const { WebviewWindow } = window.__TAURI__.webviewWindow;
+                    // Reuse an existing display window if it's already open.
+                    const existing = await WebviewWindow.getByLabel(label);
+                    if (existing) {
+                        await existing.show();
+                        await existing.setFocus();
+                        // Push the new URL so layout / opacity changes apply.
+                        await existing.navigate('http://localhost:7777' + url);
+                        return;
+                    }
+                    new WebviewWindow(label, {
+                        url: 'http://localhost:7777' + url,
+                        title: 'KAIRO Display',
+                        width:  opts.width  || 1280,
+                        height: opts.height || 720,
+                        x: opts.x,
+                        y: opts.y,
+                        decorations:  false,
+                        alwaysOnTop:  true,
+                        resizable:    true,
+                        fullscreen:   opts.fullscreen || false,
+                        skipTaskbar:  false,
+                    });
+                } catch (e) {
+                    console.warn('[KAIRO] Tauri window creation failed, falling back:', e);
+                    window.open(url, label, 'width=' + (opts.width||1280) + ',height=' + (opts.height||720));
+                }
+            } else {
+                var features = 'width=' + (opts.width||1280) + ',height=' + (opts.height||720);
+                if (opts.x != null) features += ',left=' + opts.x;
+                if (opts.y != null) features += ',top=' + opts.y;
+                window.open(url, label, features);
+            }
+        }
+
+        // Open Syphon window
+        var openSyphonBtn = document.getElementById('open-syphon-btn');
+        if (openSyphonBtn) {
+            openSyphonBtn.addEventListener('click', function() {
+                var layout  = document.querySelector('#syphon-layout-toggle .toggle-btn.active')?.dataset.layout || 'fullscreen';
+                var opacity = document.getElementById('syphon-bg-opacity')?.value || '80';
+                var url = '/display.html?layout=' + layout + '&opacity=' + opacity;
+                openDisplayWindow('kairo-syphon', url, { width: 1280, height: 720 });
+            });
+        }
+
+        // Open External Display window
+        var openExternalBtn = document.getElementById('open-external-btn');
+        if (openExternalBtn) {
+            openExternalBtn.addEventListener('click', function() {
+                var layout  = document.querySelector('#external-layout-toggle .toggle-btn.active')?.dataset.layout || 'fullscreen';
+                var opacity = document.getElementById('external-bg-opacity')?.value || '80';
+                var url = '/display.html?layout=' + layout + '&opacity=' + opacity;
+                // Place the display window on the secondary screen (offset by primary width).
+                var sw = window.screen.width;
+                var sh = window.screen.height;
+                openDisplayWindow('kairo-external', url, {
+                    width: sw, height: sh,
+                    x: sw, y: 0,
+                    fullscreen: true,
+                });
+            });
+        }
+    })();
+    </script>
 
     <script src="app.js"></script>
 </body>

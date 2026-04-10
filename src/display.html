@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KAIRO Display</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+            background: #000;
+            font-family: 'Manrope', system-ui, -apple-system, sans-serif;
+            overflow: hidden;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        #stage {
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+            overflow: hidden;
+        }
+
+        /* Layer transitions */
+        .display-layer {
+            transition: opacity 350ms ease, transform 350ms ease;
+        }
+
+        /* Stage fade wrapper */
+        #stage.fade-out .display-layer { opacity: 0 !important; }
+
+        /* Transparent background (no-bg look) */
+        body.transparent-bg {
+            background: transparent;
+        }
+
+        /* KAIRO watermark */
+        #kairo-label {
+            position: fixed;
+            bottom: 18px;
+            right: 22px;
+            font-size: 10px;
+            font-weight: 800;
+            letter-spacing: 0.25em;
+            color: rgba(255, 255, 255, 0.12);
+            text-transform: uppercase;
+            user-select: none;
+            pointer-events: none;
+            z-index: 9999;
+        }
+
+        /* Connection status */
+        #conn-status {
+            position: fixed;
+            top: 14px;
+            left: 18px;
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: rgba(255, 255, 255, 0.2);
+            opacity: 0;
+            transition: opacity 400ms ease;
+            z-index: 9999;
+        }
+
+        #conn-status.visible { opacity: 1; }
+        #conn-status.reconnecting { color: rgba(245, 158, 11, 0.6); }
+        #conn-status.connected { color: rgba(255, 255, 255, 0.15); }
+    </style>
+</head>
+<body>
+    <div id="stage"></div>
+    <div id="kairo-label">KAIRO</div>
+    <div id="conn-status" class="visible reconnecting">Connecting…</div>
+
+    <script>
+    'use strict';
+
+    // ── URL params (legacy fallback) ───────────────────────────────────────
+    const params      = new URLSearchParams(location.search);
+    const legacyLayout  = params.get('layout') || 'fullscreen';
+    const legacyOpacity = parseInt(params.get('opacity') || '80', 10) / 100;
+
+    // ── State ──────────────────────────────────────────────────────────────
+    const WS_URL         = 'ws://localhost:7777';
+    const RECONNECT_DELAY = 3000;
+
+    let ws             = null;
+    let reconnectTimer = null;
+    let currentVerseText = '';
+    let currentVerseRef  = '';
+    let activeLook       = null;
+    let pendingFade      = false;
+
+    const stage      = document.getElementById('stage');
+    const connStatus = document.getElementById('conn-status');
+
+    // ── Font loader ────────────────────────────────────────────────────────
+    const loadedFonts = new Set(['Manrope', 'system-ui']);
+    function loadGoogleFont(family) {
+        if (!family || loadedFonts.has(family)) return;
+        loadedFonts.add(family);
+        const url = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family)}:wght@100;200;300;400;500;600;700;800;900&display=swap`;
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = url;
+        document.head.appendChild(link);
+    }
+
+    // ── Hex → rgba helper ─────────────────────────────────────────────────
+    function hexToRgb(hex) {
+        const h = hex.replace('#','');
+        const r = parseInt(h.slice(0,2), 16);
+        const g = parseInt(h.slice(2,4), 16);
+        const b = parseInt(h.slice(4,6), 16);
+        return { r, g, b };
+    }
+    function hexOpacity(hex, opacity) {
+        const { r, g, b } = hexToRgb(hex || '#000000');
+        return `rgba(${r},${g},${b},${(opacity / 100).toFixed(2)})`;
+    }
+
+    // ── Build layer DOM from look ──────────────────────────────────────────
+    function buildLayerDOM(look, verseText, verseRef) {
+        const frag    = document.createDocumentFragment();
+        const layout  = look.layout || 'fullscreen';
+        let   isTransparent = false;
+
+        look.layers.forEach(layer => {
+            if (!layer.visible) return;
+
+            if (layer.type === 'background') {
+                if (layer.fill === 'transparent') {
+                    isTransparent = true;
+                    return;
+                }
+
+                const div = document.createElement('div');
+                div.className = 'display-layer';
+                div.style.cssText = 'position:absolute;inset:0;z-index:0;';
+
+                if (layer.fill === 'solid') {
+                    div.style.background = hexOpacity(layer.color, layer.opacity);
+                } else if (layer.fill === 'gradient') {
+                    const c1 = hexOpacity(layer.color,  layer.opacity);
+                    const c2 = hexOpacity(layer.color2, layer.opacity);
+                    div.style.background = `linear-gradient(${layer.angle}deg, ${c1}, ${c2})`;
+                } else if (layer.fill === 'blur') {
+                    div.style.background = hexOpacity(layer.color, layer.opacity);
+                    div.style.backdropFilter    = 'blur(24px)';
+                    div.style.webkitBackdropFilter = 'blur(24px)';
+                }
+
+                // Lower-third / ticker: bg only covers the bottom strip
+                if (layout === 'lower-third') {
+                    div.style.inset  = 'auto 0 0 0';
+                    div.style.height = '40%';
+                } else if (layout === 'ticker') {
+                    div.style.inset  = 'auto 0 0 0';
+                    div.style.height = '18%';
+                }
+
+                frag.appendChild(div);
+                return;
+            }
+
+            if (layer.type === 'text') {
+                // Pick content for this layer
+                let content = '';
+                if (layer.binding === 'verse')     content = verseText;
+                else if (layer.binding === 'reference') content = verseRef;
+                else content = layer.customText || '';
+
+                const div = document.createElement('div');
+                div.className = 'display-layer';
+                div.dataset.binding = layer.binding || 'custom';
+                div.dataset.layerId = layer.id || '';
+
+                const fs = layer.font;
+                const shadowStr = layer.shadow.enabled
+                    ? `${layer.shadow.x}px ${layer.shadow.y}px ${layer.shadow.blur}px ${hexOpacity(layer.shadow.color, layer.shadow.opacity)}`
+                    : 'none';
+
+                div.style.cssText = `
+                    position: absolute;
+                    color: ${hexOpacity(layer.color, layer.opacity)};
+                    font-family: '${fs.family}', system-ui, sans-serif;
+                    font-size: ${fs.size}px;
+                    font-weight: ${fs.weight};
+                    font-style: ${fs.italic ? 'italic' : 'normal'};
+                    line-height: ${fs.lineHeight};
+                    letter-spacing: ${fs.letterSpacing}px;
+                    text-transform: ${fs.transform};
+                    text-align: ${layer.align};
+                    text-shadow: ${shadowStr};
+                    z-index: 10;
+                `;
+
+                // Outline via webkit-text-stroke
+                if (layer.outline && layer.outline.enabled) {
+                    div.style.webkitTextStroke = `${layer.outline.width}px ${layer.outline.color}`;
+                }
+
+                // Positioning by layout
+                if (layout === 'fullscreen') {
+                    div.style.left  = '0';
+                    div.style.right = '0';
+                    div.style.padding = '0 8%';
+                    if (layer.binding === 'verse') {
+                        div.style.top       = '50%';
+                        div.style.transform = 'translateY(-65%)';
+                        div.style.maxWidth  = '100%';
+                    } else if (layer.binding === 'reference') {
+                        div.style.top       = '50%';
+                        div.style.transform = 'translateY(40%)';
+                    } else {
+                        div.style.top       = '50%';
+                        div.style.transform = 'translateY(-50%)';
+                    }
+                } else if (layout === 'lower-third') {
+                    div.style.left    = '0';
+                    div.style.right   = '0';
+                    div.style.padding = '0 6%';
+                    if (layer.binding === 'verse') {
+                        div.style.bottom = '14%';
+                    } else if (layer.binding === 'reference') {
+                        div.style.bottom = '5%';
+                    } else {
+                        div.style.bottom = '10%';
+                    }
+                } else if (layout === 'ticker') {
+                    div.style.left    = '0';
+                    div.style.right   = '0';
+                    div.style.bottom  = '3%';
+                    div.style.padding = '0 3%';
+                    div.style.whiteSpace    = 'nowrap';
+                    div.style.overflow      = 'hidden';
+                    div.style.textOverflow  = 'ellipsis';
+                }
+
+                div.textContent = content;
+                frag.appendChild(div);
+
+                // Ensure font is loaded
+                if (fs.family !== 'system-ui') loadGoogleFont(fs.family);
+            }
+        });
+
+        return { frag, isTransparent };
+    }
+
+    // ── Default fallback look (used if no look stored yet) ─────────────────
+    const FALLBACK_LOOK = {
+        id: 'default', name: 'Default', layout: 'fullscreen', animation: 'fade',
+        layers: [
+            { id: 'bg', type: 'background', name: 'Background', visible: true,
+              fill: 'solid', color: '#000000', opacity: 100, color2: '#1a1a2e', angle: 160 },
+            { id: 'verse', type: 'text', name: 'Verse Text', visible: true,
+              binding: 'verse', customText: '',
+              font: { family: 'Manrope', size: 56, weight: 500, italic: false, lineHeight: 1.35, letterSpacing: 0, transform: 'none' },
+              color: '#ffffff', opacity: 100, align: 'center',
+              shadow: { enabled: true, color: '#000000', opacity: 70, blur: 24, x: 0, y: 4 },
+              outline: { enabled: false, color: '#000000', width: 2 } },
+            { id: 'ref', type: 'text', name: 'Reference', visible: true,
+              binding: 'reference', customText: '',
+              font: { family: 'Manrope', size: 24, weight: 600, italic: false, lineHeight: 1.2, letterSpacing: 3, transform: 'uppercase' },
+              color: '#ffffff', opacity: 55, align: 'center',
+              shadow: { enabled: false, color: '#000000', opacity: 70, blur: 4, x: 0, y: 1 },
+              outline: { enabled: false, color: '#000000', width: 1 } },
+        ],
+    };
+
+    // ── Load look from localStorage ────────────────────────────────────────
+    function loadActiveLook() {
+        try {
+            const stored = localStorage.getItem('kairo-active-look');
+            return stored ? JSON.parse(stored) : null;
+        } catch { return null; }
+    }
+
+    // ── Render the stage with current look + text ──────────────────────────
+    function renderStage(verseText, verseRef, animate = true) {
+        const look = activeLook || FALLBACK_LOOK;
+
+        const doRender = () => {
+            stage.innerHTML = '';
+            document.body.classList.remove('transparent-bg');
+
+            const { frag, isTransparent } = buildLayerDOM(look, verseText, verseRef);
+            if (isTransparent) document.body.classList.add('transparent-bg');
+            stage.appendChild(frag);
+        };
+
+        if (animate) {
+            // Fade out → swap → fade in
+            stage.classList.add('fade-out');
+            stage.style.transition = 'opacity 300ms ease';
+            stage.style.opacity    = '0';
+
+            setTimeout(() => {
+                doRender();
+                stage.style.opacity = '1';
+                stage.classList.remove('fade-out');
+            }, 320);
+        } else {
+            doRender();
+        }
+    }
+
+    // ── Update only the text content in existing layers (no re-render) ──────
+    function updateTextContent(verseText, verseRef) {
+        // Use data-binding attributes to target the right divs
+        stage.querySelectorAll('[data-binding="verse"]').forEach(el => {
+            el.textContent = verseText;
+        });
+        stage.querySelectorAll('[data-binding="reference"]').forEach(el => {
+            el.textContent = verseRef;
+        });
+    }
+
+    // ── Apply a new look (re-render with existing text) ────────────────────
+    function applyLook(look, animate = true) {
+        activeLook = look;
+        renderStage(currentVerseText, currentVerseRef, animate);
+    }
+
+    // ── Show verse (smart update: re-render on first verse, in-place after) ──
+    function showVerse(text, ref, isRangeActive = false) {
+        const wasEmpty = !currentVerseText && !currentVerseRef;
+        const changed  = text !== currentVerseText || ref !== currentVerseRef;
+        currentVerseText = text;
+        currentVerseRef  = ref;
+
+        if (!changed) {
+            if (isRangeActive) setRangeActive(true);
+            return;
+        }
+
+        if (wasEmpty || stage.children.length === 0) {
+            // First verse or blank stage — do a full render with fade
+            renderStage(text, ref, true);
+        } else {
+            // Stage already has layers — fade text, swap, fade back
+            const textEls = stage.querySelectorAll('[data-binding]');
+            textEls.forEach(el => { el.style.opacity = '0'; el.style.transition = 'opacity 250ms ease'; });
+
+            setTimeout(() => {
+                updateTextContent(text, ref);
+                textEls.forEach(el => { el.style.opacity = ''; });
+            }, 260);
+        }
+
+        // Range active highlight
+        if (isRangeActive) {
+            setTimeout(() => setRangeActive(true), 320);
+        }
+    }
+
+    function clearDisplay() {
+        currentVerseText = '';
+        currentVerseRef  = '';
+        renderStage('', '', true);
+    }
+
+    function setRangeActive(active) {
+        // Target text layers specifically (they have data-binding)
+        stage.querySelectorAll('[data-binding]').forEach(el => {
+            el.style.filter = active ? 'brightness(1.18)' : '';
+        });
+    }
+
+    // ── Storage event → look updated from main window ─────────────────────
+    window.addEventListener('storage', (e) => {
+        if (e.key === 'kairo-active-look' && e.newValue) {
+            try {
+                const newLook = JSON.parse(e.newValue);
+                applyLook(newLook, true);
+            } catch {}
+        }
+    });
+
+    // ── F key → fullscreen ─────────────────────────────────────────────────
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'f' || e.key === 'F') {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen?.();
+            } else {
+                document.exitFullscreen?.();
+            }
+        }
+    });
+
+    // ── WebSocket ──────────────────────────────────────────────────────────
+    function connect() {
+        if (ws) { try { ws.close(); } catch {} ws = null; }
+
+        setConnStatus('reconnecting', 'Connecting…');
+
+        try { ws = new WebSocket(WS_URL); }
+        catch { scheduleReconnect(); return; }
+
+        ws.onopen = () => {
+            clearTimeout(reconnectTimer);
+            setConnStatus('connected', '');
+            setTimeout(() => connStatus.classList.remove('visible'), 1500);
+        };
+
+        ws.onmessage = (event) => {
+            let msg;
+            try { msg = JSON.parse(event.data); } catch { return; }
+            handleMessage(msg);
+        };
+
+        ws.onerror = () => {};
+
+        ws.onclose = () => {
+            ws = null;
+            setConnStatus('reconnecting', 'Reconnecting…');
+            connStatus.classList.add('visible');
+            scheduleReconnect();
+        };
+    }
+
+    function scheduleReconnect() {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = setTimeout(connect, RECONNECT_DELAY);
+    }
+
+    function setConnStatus(cls, text) {
+        connStatus.className = `visible ${cls}`;
+        connStatus.textContent = text;
+    }
+
+    // ── Message handler ────────────────────────────────────────────────────
+    function handleMessage(msg) {
+        if (msg.type === 'detection' && msg.target === 'viewer') {
+            const verse = msg.verses && msg.verses[0];
+            if (verse) {
+                showVerse(verse.text || verse.verse || '', verse.reference || verse.ref || '');
+            }
+            return;
+        }
+
+        if (msg.type === 'range-active') {
+            const verse = msg.verses && msg.verses[0];
+            if (verse) {
+                showVerse(verse.text || verse.verse || '', verse.reference || verse.ref || '', true);
+            } else {
+                setRangeActive(true);
+            }
+            return;
+        }
+
+        if (msg.type === 'range-end') {
+            setRangeActive(false);
+            return;
+        }
+
+        if (msg.type === 'clear') {
+            clearDisplay();
+            return;
+        }
+
+        // look-update: main window broadcasts the active look
+        if (msg.type === 'look-update' && msg.look) {
+            try { applyLook(msg.look, true); } catch {}
+            return;
+        }
+    }
+
+    // ── Boot ───────────────────────────────────────────────────────────────
+    // 1. Load active look from localStorage
+    activeLook = loadActiveLook() || FALLBACK_LOOK;
+
+    // 2. Initial render (empty verse/ref)
+    renderStage('', '', false);
+
+    // 3. Connect WebSocket
+    connect();
+    </script>
+</body>
+</html>

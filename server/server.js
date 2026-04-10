@@ -19,12 +19,64 @@ const cors       = require('cors');
 const { WebSocketServer } = require('ws');
 const { Worker } = require('worker_threads');
 const axios      = require('axios');
+const OBSWebSocket = require('obs-websocket-js/json').default;
 
-const { parseSpokenReference, parseAllSpokenReferences, SINGLE_WORD_BOOKS } = require('./reference_parser');
+const { parseSpokenReference, parseAllSpokenReferences, resolvePartialReference, referenceContext, SINGLE_WORD_BOOKS } = require('./reference_parser');
 
 // ── Config ────────────────────────────────────────────────────────────────
-const PORT     = 7777;
-const DATA_DIR = path.join(__dirname, '..', 'databases', 'logos');
+const PORT = 7777;
+
+// When running inside the Tauri bundle, KAIRO_DB_DIR points to the resource
+// directory where map.json and kjv.json are copied at build time.
+// In dev, fall back to the project-root databases folder.
+const DATA_DIR = process.env.KAIRO_DB_DIR
+  || path.join(__dirname, '..', 'databases', 'logos');
+
+// ── Sentence Buffer ───────────────────────────────────────────────────────
+// Accumulates is_final Deepgram fragments into complete sentences before
+// running expensive verbatim/fingerprint detection.
+// Direct reference parsing (instant) still fires on every fragment.
+// Flushes on: sentence-ending punctuation, speech_final, or 4s timeout.
+class SentenceBuffer {
+  constructor(timeoutMs = 4000) {
+    this._buf        = '';
+    this._lastAppend = 0;
+    this._timeoutMs  = timeoutMs;
+  }
+
+  // Append a final fragment. Returns flushed sentence if boundary detected, else null.
+  append(text) {
+    if (!text) return null;
+    this._buf        = this._buf ? this._buf + ' ' + text : text;
+    this._lastAppend = Date.now();
+    const t = this._buf.trimEnd();
+    if (t.endsWith('.') || t.endsWith('!') || t.endsWith('?')) return this._flush();
+    return null;
+  }
+
+  // Check if the buffer has timed out (call periodically).
+  checkTimeout() {
+    if (!this._buf || !this._lastAppend) return null;
+    if (Date.now() - this._lastAppend >= this._timeoutMs) return this._flush();
+    return null;
+  }
+
+  // Force-flush on speech_final.
+  forceFlush() {
+    if (!this._buf) return null;
+    return this._flush();
+  }
+
+  get content() { return this._buf; }
+  get hasContent() { return !!this._buf; }
+
+  _flush() {
+    const text = this._buf.trim();
+    this._buf        = '';
+    this._lastAppend = 0;
+    return text || null;
+  }
+}
 
 // ── Cached regex patterns (hot-path) ─────────────────────────────────────
 const RE_NONALPHA   = /[^a-z\s]/g;
@@ -32,7 +84,12 @@ const RE_WHITESPACE = /\s+/g;
 const RE_SPACES     = /\s+/;
 
 // ── Settings ──────────────────────────────────────────────────────────────
-const SETTINGS_PATH = path.join(__dirname, '..', 'databases', 'settings.json');
+// In production (Tauri bundle) the resource dir is read-only on macOS/Windows.
+// lib.rs passes KAIRO_APP_DATA_DIR pointing to the user-writable app-data folder.
+// In dev, fall back to the repo databases/ directory so existing settings persist.
+const SETTINGS_PATH = process.env.KAIRO_APP_DATA_DIR
+  ? path.join(process.env.KAIRO_APP_DATA_DIR, 'settings.json')
+  : path.join(__dirname, '..', 'databases', 'settings.json');
 function loadSettings() {
   try { return JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8')); } catch { return {}; }
 }
@@ -41,6 +98,66 @@ function saveSettings(s) {
   fs.writeFileSync(SETTINGS_PATH, JSON.stringify(s, null, 2));
 }
 let settings = loadSettings();
+
+// ── OBS WebSocket ─────────────────────────────────────────────────────────
+let obsClient    = null;
+let obsConnected = false;
+
+async function connectOBS() {
+  if (obsClient) { try { await obsClient.disconnect(); } catch {} obsClient = null; }
+  obsConnected = false;
+  const s = loadSettings();
+  if (!s.obsEnabled) return;
+  obsClient = new OBSWebSocket();
+  obsClient.on('ConnectionClosed', () => { obsConnected = false; console.log('[OBS] Disconnected'); });
+  obsClient.on('ConnectionError',  () => { obsConnected = false; });
+  try {
+    await obsClient.connect(s.obsUrl || 'ws://localhost:4455', s.obsPassword || '');
+    obsConnected = true;
+    console.log('[OBS] Connected to', s.obsUrl || 'ws://localhost:4455');
+  } catch (e) {
+    obsConnected = false;
+    obsClient = null;
+    console.log('[OBS] Connection failed:', e.message);
+  }
+}
+
+async function sendToOBS(verse) {
+  if (!obsConnected || !obsClient) return false;
+  const s          = loadSettings();
+  const sourceName = s.obsTextSource || 'Scripture';
+  const t          = s.translation || 'KJV';
+  const text       = verse.text + '\n' + verse.reference + ' (' + t + ')';
+  try {
+    await obsClient.call('SetInputSettings', {
+      inputName:     sourceName,
+      inputSettings: { text },
+    });
+    return true;
+  } catch (e) {
+    console.warn('[OBS] Send failed:', e.message);
+    if (e.code === 1006 || e.message?.includes('closed')) obsConnected = false;
+    return false;
+  }
+}
+
+async function testOBSConnection(url, password) {
+  const client = new OBSWebSocket();
+  try {
+    await client.connect(url || 'ws://localhost:4455', password || '');
+    const { obsVersion } = await client.call('GetVersion');
+    await client.disconnect();
+    return { success: true, version: obsVersion };
+  } catch (e) {
+    try { await client.disconnect(); } catch {}
+    return { success: false, error: e.message };
+  }
+}
+
+// Connect OBS on startup if enabled
+setTimeout(() => {
+  if (loadSettings().obsEnabled) connectOBS().catch(() => {});
+}, 2000);
 
 // ── Detection Worker ──────────────────────────────────────────────────────
 let detectionWorker  = null;
@@ -115,10 +232,19 @@ wss.on('connection', (ws) => {
   // Send current worker status on connect
   ws.send(JSON.stringify({ type: 'worker-status', ready: workerBasicReady }));
 
-  // Forward binary audio frames to Deepgram
+  // Forward binary audio frames to Deepgram + maintain ring buffer for REST fallback
   ws.on('message', (data, isBinary) => {
     if (isBinary && deepgramConnection) {
       try { deepgramConnection.send(data); } catch {}
+    }
+    if (isBinary) {
+      const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data);
+      audioRingBuffer.push({ data: chunk, time: Date.now() });
+      audioRingBytes += chunk.length;
+      // Evict oldest chunks when over the cap
+      while (audioRingBytes > AUDIO_RING_MAX_BYTES && audioRingBuffer.length) {
+        audioRingBytes -= audioRingBuffer.shift().data.length;
+      }
     }
   });
 });
@@ -154,6 +280,15 @@ let lastDetectedRef  = null;
 let lastDetectedTime = 0;
 const DETECT_DEDUP_MS = 45000;   // Same verse won't flood SENT list for 45 s
 
+// ── Ensemble scoring ───────────────────────────────────────────────────────
+// When verbatim + fingerprint agree on the same verse within ENSEMBLE_WINDOW_MS,
+// boost the combined score and re-broadcast. Direct detection always wins.
+const ENSEMBLE_WINDOW_MS = 6000;
+const ENSEMBLE_BOOST     = 0.08;   // add 8 points to the score when two paths agree
+
+// Map<verseKey, { score, method, verses, time }>
+const ensembleCache = new Map();
+
 // Same-book close-succession: if a new verse from the same book arrives within
 // this window, assume the preacher is correcting/continuing — always let it through.
 let lastSentBook = null;
@@ -176,9 +311,103 @@ let interimDetectedTime = 0;
 let lastInterimVerbatim = 0;
 const INTERIM_VERBATIM_MS = 500;  // run at most once per 500ms on interim
 
+// Sentence-level accumulator — verbatim/fingerprint run on complete sentences
+let sentenceBuffer = new SentenceBuffer(4000);
+
 // Suppress fingerprint search from routing to viewer for N ms after a direct reference
 let lastDirectRefTime = 0;
 const DIRECT_REF_SUPPRESS_MS = 12000;
+
+// ── Audio ring buffer (REST fallback on WS drop) ──────────────────────────
+// Keeps last 25s of raw PCM so we can submit to Deepgram REST if the
+// WebSocket drops mid-sermon. 16kHz × 2 bytes × 25s = 800 000 bytes.
+const AUDIO_RING_MAX_BYTES = 16000 * 2 * 25;
+let audioRingBuffer = [];   // [{ data: Buffer, time: number }, ...]
+let audioRingBytes  = 0;
+
+// ── Reading mode ───────────────────────────────────────────────────────────
+// When the pastor reads scripture verbatim for an extended stretch, detection
+// thresholds tighten and the range auto-advance becomes more sensitive.
+// Exit when the hit rate drops (conversational speech returns).
+const READING_MODE_WINDOW_MS   = 30000;  // evaluation window
+const READING_MODE_HIT_THRESH  = 3;      // hits in window to enter reading mode
+
+let readingModeActive    = false;
+let readingModeBook      = null;
+let readingModeChapter   = null;
+let readingModeHits      = 0;
+let lastReadingModeReset = 0;
+
+function trackReadingModeHit(verse, similarity) {
+  if (similarity < 0.92) return;
+  readingModeHits++;
+  const now = Date.now();
+  if (now - lastReadingModeReset < READING_MODE_WINDOW_MS) return;
+  // Window expired — evaluate and reset
+  lastReadingModeReset = now;
+  const wasActive      = readingModeActive;
+  readingModeActive    = readingModeHits >= READING_MODE_HIT_THRESH;
+  if (readingModeActive) {
+    readingModeBook    = verse?.book    || readingModeBook;
+    readingModeChapter = verse?.chapter || readingModeChapter;
+  }
+  if (wasActive !== readingModeActive) {
+    console.log(`[Reading] Mode ${readingModeActive ? 'ON' : 'OFF'}${readingModeActive ? ` — ${readingModeBook} ${readingModeChapter}` : ''}`);
+    broadcast({ type: 'reading-mode', active: readingModeActive, book: readingModeBook, chapter: readingModeChapter });
+  }
+  readingModeHits = 0;
+}
+
+function resetReadingMode() {
+  readingModeActive    = false;
+  readingModeBook      = null;
+  readingModeChapter   = null;
+  readingModeHits      = 0;
+  lastReadingModeReset = 0;
+}
+
+// ── Deepgram REST fallback ─────────────────────────────────────────────────
+// Submits buffered audio to Deepgram REST API when the WebSocket drops
+// mid-sermon. Catches the gap that would otherwise be silently lost.
+async function submitDeepgramRestFallback() {
+  if (!audioRingBuffer.length) return;
+  const key = settings.deepgramApiKey || loadSettings().deepgramApiKey;
+  if (!key) return;
+
+  // Only submit audio captured in the last 20s (avoid re-processing old audio)
+  const cutoff     = Date.now() - 20000;
+  const recentAudio = audioRingBuffer.filter(c => c.time >= cutoff);
+  if (!recentAudio.length) return;
+
+  console.log(`[Deepgram] REST fallback — submitting ${recentAudio.length} buffered chunks…`);
+  const combined = Buffer.concat(recentAudio.map(c => c.data));
+
+  try {
+    const response = await axios.post(
+      'https://api.deepgram.com/v1/listen?model=nova-2&language=en-US&smart_format=true&punctuate=true',
+      combined,
+      {
+        headers: {
+          'Authorization': `Token ${key}`,
+          'Content-Type': 'audio/raw;encoding=linear16;sample_rate=16000;channels=1',
+        },
+        timeout: 15000,
+      }
+    );
+    const transcript = response.data?.results?.channels?.[0]?.alternatives?.[0]?.transcript || '';
+    if (transcript.trim()) {
+      console.log('[Deepgram] REST fallback transcript:', transcript.slice(0, 100));
+      broadcast({ type: 'transcript', text: transcript, isFinal: true, confidence: 0.9, source: 'rest-fallback' });
+      // Run full detection pipeline on the recovered transcript
+      await processForReferences(transcript, true);
+      if (workerBasicReady) {
+        await Promise.all([processVerbatim(transcript), runFingerprintSearch(transcript, true)]);
+      }
+    }
+  } catch (err) {
+    console.warn('[Deepgram] REST fallback failed:', err.message);
+  }
+}
 
 // ── Range Queue ───────────────────────────────────────────────────────────
 // When a verse range is detected (e.g. Matt 1:10-15), verse 1 auto-sends
@@ -239,7 +468,7 @@ async function advanceRangeQueue() {
   rangeCurrentVerse   = next;
   rangeVerseStartTime = Date.now();
   broadcastRangeState();
-  await sendToProPresenter(next);
+  await sendToOutputs(next);
   broadcast({ type: 'detection', verses: [next], method: 'direct', topScore: 1.0, target: 'viewer', timestamp: Date.now() });
   // Update active reference in UI
   broadcast({ type: 'range-active', activeRef: next.reference });
@@ -305,10 +534,13 @@ function checkRangeAutoAdvance() {
   const verseWordCount = verseText.split(/\s+/).filter(Boolean).length;
   const wps            = estimateReadingWPS();
 
-  // How long this verse should take at the current pace, plus 15% grace
-  const estimatedMs = (verseWordCount / wps) * 1000 * 1.15;
-  // Never advance in under 3 seconds regardless of verse length
-  const waitMs      = Math.max(3000, estimatedMs);
+  // How long this verse should take at the current pace.
+  // In reading mode the pastor is reading scripture verbatim — tighten the
+  // grace period so advances feel natural (8% vs 15% for conversational).
+  const graceMultiplier = readingModeActive ? 1.08 : 1.15;
+  const estimatedMs = (verseWordCount / wps) * 1000 * graceMultiplier;
+  // Never advance in under 2s (reading mode) or 3s (normal) regardless of verse length
+  const waitMs      = Math.max(readingModeActive ? 2000 : 3000, estimatedMs);
   const elapsed     = now - rangeVerseStartTime;
 
   if (elapsed >= waitMs) {
@@ -473,6 +705,8 @@ app.post('/api/settings', (req, res) => {
   const updated = { ...current, ...req.body };
   saveSettings(updated);
   settings = updated;
+  const obsChanged = req.body.obsEnabled !== undefined || req.body.obsUrl !== undefined || req.body.obsPassword !== undefined;
+  if (obsChanged) connectOBS().catch(() => {});
   res.json({ ok: true });
 });
 
@@ -489,6 +723,34 @@ app.post('/api/propresenter/send', async (req, res) => {
 app.post('/api/propresenter/clear', async (_, res) => {
   await clearProPresenter();
   res.json({ ok: true });
+});
+
+// Broadcast active look to all connected display windows via WebSocket
+app.post('/api/look/apply', (req, res) => {
+  const { look } = req.body;
+  if (!look || typeof look !== 'object') return res.status(400).json({ error: 'No look provided' });
+  broadcast({ type: 'look-update', look });
+  res.json({ ok: true });
+});
+
+app.get('/api/obs/test', async (_, res) => {
+  const s = loadSettings();
+  const r = await testOBSConnection(s.obsUrl, s.obsPassword);
+  res.json(r);
+});
+
+app.post('/api/obs/connect', async (_, res) => {
+  await connectOBS();
+  res.json({ ok: obsConnected });
+});
+
+app.get('/api/obs/sources', async (_, res) => {
+  if (!obsConnected || !obsClient) return res.json({ sources: [] });
+  try {
+    const { inputs } = await obsClient.call('GetInputList', { inputKind: 'text_gdiplus_v3' });
+    const mac = inputs?.length ? inputs : (await obsClient.call('GetInputList', { inputKind: 'text_ft2_source_v2' })).inputs || [];
+    res.json({ sources: mac.map(i => i.inputName) });
+  } catch { res.json({ sources: [] }); }
 });
 
 app.post('/api/range/next', async (_, res) => {
@@ -645,6 +907,11 @@ async function startDeepgram(config = {}) {
   lastDirectRefTime     = 0;
   resetSermonContext();
   resetTopicAccumulator();
+  resetReadingMode();
+  sentenceBuffer = new SentenceBuffer(4000);
+  ensembleCache.clear();
+  audioRingBuffer = [];
+  audioRingBytes  = 0;
 
   try {
     connectionState = 'connecting';
@@ -719,6 +986,7 @@ async function startDeepgram(config = {}) {
           const transcript = alt.transcript;
           const isFinal    = data.is_final;
           const confidence = alt.confidence || 0;
+          const speechFinal = data.speech_final || false;
 
           broadcast({ type: 'transcript', text: transcript, isFinal, confidence });
 
@@ -728,7 +996,20 @@ async function startDeepgram(config = {}) {
           // detection doesn't wait for the endpoint (300-1200ms delay).
           if (!isFinal) {
             if (workerBasicReady) {
-              const foundRef = await processForReferences(transcript, false);
+              let foundRef = await processForReferences(transcript, false);
+              // Also try partial resolution on interim for live feedback
+              if (!foundRef && referenceContext.isValid) {
+                const partial = resolvePartialReference(transcript);
+                if (partial && partial.verse) {
+                  try {
+                    const msg = await workerCall('directLookup', { book: partial.book, chapter: partial.chapter, verse: partial.verse }, 3000);
+                    if (msg.result) {
+                      broadcastDetection([msg.result], 'direct', 1.0, 'viewer');
+                      foundRef = true;
+                    }
+                  } catch {}
+                }
+              }
               if (!foundRef) {
                 const interimWords = transcript.split(RE_SPACES).filter(Boolean).length;
                 const now = Date.now();
@@ -772,28 +1053,74 @@ async function startDeepgram(config = {}) {
           // If a verse range is active, check if preacher has moved to the next verse
           if (rangeQueue.length) checkRangeAutoAdvance();
 
-          // Path 1: direct reference (may be deduped if interim already fired)
-          const foundRef = await processForReferences(transcript, true);
+          // Path 1: direct reference — fires on every final fragment (instant, O(1))
+          let foundRef = await processForReferences(transcript, true);
+
+          // Path 1b: bare verse resolution — "verse 17" in context of Romans 8
+          if (!foundRef && referenceContext.isValid) {
+            const partial = resolvePartialReference(transcript);
+            if (partial) {
+              try {
+                let verses = [];
+                if (partial.verseStart && partial.verseEnd && partial.verseEnd !== partial.verseStart) {
+                  const msg = await workerCall('rangeLookup', { book: partial.book, chapter: partial.chapter, verseStart: partial.verseStart, verseEnd: partial.verseEnd }, 3000);
+                  verses = msg.results || [];
+                } else if (partial.verse) {
+                  const msg = await workerCall('directLookup', { book: partial.book, chapter: partial.chapter, verse: partial.verse }, 3000);
+                  if (msg.result) verses = [msg.result];
+                }
+                if (verses.length) {
+                  console.log(`[Context] Resolved partial ref "verse ${partial.verse || partial.verseStart}" → ${partial.book} ${partial.chapter}:${partial.verse || partial.verseStart}`);
+                  if (verses.length > 1) setRangeQueue(verses);
+                  else clearRangeQueue();
+                  broadcastDetection(verses, 'direct', 1.0, 'viewer');
+                  foundRef = true;
+                }
+              } catch (err) {
+                console.warn('[Context] Partial ref lookup error:', err.message);
+              }
+            }
+          }
 
           if (transcriptBuffer.length) {
             transcriptBuffer[transcriptBuffer.length - 1].hasRef = !!foundRef;
           }
 
-          // Always run fingerprint/verbatim even when a reference was found —
-          // the reference might be wrong (STT garble). Route results to
-          // suggestions only (not viewer) so the operator sees the real verse.
-          if (workerBasicReady) {
-            const canFingerprint = now - lastFingerprintSearch > FINGERPRINT_INTERVAL_MS;
+          // ── Sentence buffer — accumulate finals before running expensive paths ──
+          // Verbatim/fingerprint run on complete sentences for better accuracy.
+          // Flushed on: sentence-ending punctuation, speech_final, or 4s timeout.
+          const sentenceFlushed = speechFinal
+            ? sentenceBuffer.forceFlush()
+            : sentenceBuffer.append(transcript);
 
-            if (canFingerprint) {
-              lastFingerprintSearch = now;
+          const textForExpensive = sentenceFlushed || sentenceBuffer.checkTimeout();
+
+          if (workerBasicReady && textForExpensive) {
+            const canFingerprint = now - lastFingerprintSearch > FINGERPRINT_INTERVAL_MS;
+            lastFingerprintSearch = now;
+            await Promise.all([
+              processVerbatim(textForExpensive),
+              canFingerprint
+                ? runFingerprintSearch(textForExpensive, true, !foundRef)
+                : Promise.resolve(),
+            ]);
+          } else if (workerBasicReady && !textForExpensive) {
+            // Sentence not complete yet — run verbatim on current fragment only
+            // so we don't miss an obvious exact-match quote mid-sentence
+            const interimWords = transcript.split(/\s+/).filter(Boolean).length;
+            if (interimWords >= 8) {
+              processVerbatim(transcript).catch(() => {});
+            }
+          }
+
+          // ── speech_final sweep over full buffer ────────────────────────
+          if (speechFinal && workerBasicReady) {
+            const bufferText = transcriptBuffer.map(t => t.text).join(' ').trim();
+            if (bufferText && bufferText !== textForExpensive) {
               await Promise.all([
-                processVerbatim(transcript),
-                runFingerprintSearch(transcript, !foundRef), // viewer only if no ref found
+                processVerbatim(bufferText),
+                runFingerprintSearch(bufferText, true, !foundRef),
               ]);
-            } else {
-              // Fingerprint is throttled — still run verbatim alone
-              await processVerbatim(transcript);
             }
           }
         } catch (err) {
@@ -830,6 +1157,8 @@ async function startDeepgram(config = {}) {
         if (!deepgramUserStopped) {
           console.log(`[Deepgram] Connection closed (code ${code}) — reconnecting in 1.5s…`);
           broadcast({ type: 'connection-state', state: 'reconnecting' });
+          // Submit any buffered audio via REST before reconnecting
+          submitDeepgramRestFallback().catch(() => {});
           setTimeout(() => {
             if (!deepgramUserStopped) {
               startDeepgram(deepgramLastConfig).catch(err => {
@@ -913,6 +1242,8 @@ async function processForReferences(transcript, isFinal) {
 
       lastDirectRefTime = Date.now();
       updateSermonContext(ref);
+      // Update the reference context so bare "verse N" patterns can resolve
+      referenceContext.update(ref.book, ref.chapter || null);
 
       // ── Range advance via explicit reference ────────────────────────────────
       // When a range is active and the preacher calls the next verse explicitly
@@ -952,7 +1283,7 @@ async function processForReferences(transcript, isFinal) {
           if (vKey !== lastSentRef || now - lastSentTime >= SEND_DEDUP_MS) {
             lastSentBook     = verses[0].book;
             lastSentBookTime = now;
-            sendToProPresenter(verses[0]).catch(() => {});
+            sendToOutputs(verses[0]).catch(() => {});
           }
         }
       }
@@ -987,7 +1318,16 @@ async function processVerbatim(transcript) {
     if (!results.length) return false;
     const viewer      = results.filter(r => r.similarity >= 0.90);
     const suggestions = results.filter(r => r.similarity < 0.90);
-    if (viewer.length)      broadcastDetection(viewer,      'verbatim', viewer[0].similarity,      'viewer');
+    if (viewer.length) {
+      const vKey = `${viewer[0].book}|${viewer[0].chapter}|${viewer[0].verse}`;
+      const boosted = ensembleScore(vKey, 'verbatim', viewer[0].similarity, viewer);
+      broadcastDetection(viewer, 'verbatim', boosted, 'viewer');
+      // Feed high-confidence verbatim hits into sermon context + reading mode tracker
+      if (viewer[0].similarity >= 0.92) {
+        updateSermonContext({ book: viewer[0].book, chapter: viewer[0].chapter, verse: viewer[0].verse });
+        trackReadingModeHit(viewer[0], viewer[0].similarity);
+      }
+    }
     if (suggestions.length) broadcastDetection(suggestions, 'verbatim', suggestions[0].similarity, 'suggestions');
     return true;
   } catch { return false; }
@@ -1045,7 +1385,13 @@ async function runFingerprintSearch(currentSegment, skipNewTranscriptCheck = fal
     if (!results.length || confidence === 'none') return;
 
     if (allowViewer && (confidence === 'high' || confidence === 'medium') && !recentDirectRef) {
-      broadcastDetection(results, 'fingerprint', results[0].similarity, 'viewer');
+      const fpKey = `${results[0].book}|${results[0].chapter}|${results[0].verse}`;
+      const boosted = ensembleScore(fpKey, 'fingerprint', results[0].similarity, results);
+      broadcastDetection(results, 'fingerprint', boosted, 'viewer');
+      // Feed high-confidence fingerprint hits into sermon context
+      if (confidence === 'high' && results[0].similarity >= 0.87) {
+        updateSermonContext({ book: results[0].book, chapter: results[0].chapter, verse: results[0].verse });
+      }
     } else if (results.length && results[0].similarity >= 0.85) {
       // Not confident enough for the live screen, but the top result clears a high
       // bar — surface it as a single early-warning suggestion so the operator gets
@@ -1065,6 +1411,32 @@ async function runFingerprintSearch(currentSegment, skipNewTranscriptCheck = fal
 
 function confidenceRank(c) {
   return c === 'high' ? 3 : c === 'medium' ? 2 : c === 'low' ? 1 : 0;
+}
+
+// ── Ensemble scorer ────────────────────────────────────────────────────────
+// Called from processVerbatim and runFingerprintSearch before broadcasting.
+// Returns boosted score if another method already detected this verse recently.
+function ensembleScore(verseKey, method, score, verses) {
+  if (!verseKey) return score;
+  const now = Date.now();
+
+  // Clean stale entries
+  for (const [key, entry] of ensembleCache) {
+    if (now - entry.time > ENSEMBLE_WINDOW_MS) ensembleCache.delete(key);
+  }
+
+  const existing = ensembleCache.get(verseKey);
+  if (existing && existing.method !== method && now - existing.time <= ENSEMBLE_WINDOW_MS) {
+    // Two different methods agree — boost
+    const boosted = Math.min(1.0, Math.max(score, existing.score) + ENSEMBLE_BOOST);
+    console.log(`[Ensemble] ${existing.method}+${method} agree on ${verseKey} → ${(boosted*100).toFixed(0)}%`);
+    ensembleCache.delete(verseKey); // consume — don't triple-boost
+    return boosted;
+  }
+
+  // Store for future agreement
+  ensembleCache.set(verseKey, { score, method, verses, time: now });
+  return score;
 }
 
 function broadcastDetection(verses, method, topScore, target) {
@@ -1106,9 +1478,18 @@ function broadcastDetection(verses, method, topScore, target) {
     if (vKey !== lastSentRef || now - lastSentTime >= SEND_DEDUP_MS) {
       lastSentBook     = verses[0].book;
       lastSentBookTime = now;
-      sendToProPresenter(verses[0]).catch(() => {});
+      sendToOutputs(verses[0]).catch(() => {});
     }
   }
+}
+
+// ── Output routing — sends to all enabled destinations ───────────────────
+async function sendToOutputs(verse) {
+  const s = loadSettings();
+  const tasks = [];
+  if (s.proPresenterEnabled !== false) tasks.push(sendToProPresenter(verse).catch(() => {}));
+  if (s.obsEnabled && obsConnected)    tasks.push(sendToOBS(verse).catch(() => {}));
+  await Promise.all(tasks);
 }
 
 // ── ProPresenter ──────────────────────────────────────────────────────────

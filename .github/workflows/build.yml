@@ -1,0 +1,203 @@
+name: Build KAIRO
+
+on:
+  push:
+    tags:
+      - 'v*'          # triggers on v2.0.0, v2.1.0, etc.
+  workflow_dispatch:  # manual trigger from GitHub UI
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest   # Apple Silicon (arm64)
+            args: '--target aarch64-apple-darwin'
+            node-triple: 'aarch64-apple-darwin'
+          - platform: macos-13       # Intel (x86_64)
+            args: '--target x86_64-apple-darwin'
+            node-triple: 'x86_64-apple-darwin'
+          - platform: windows-latest
+            args: ''
+            node-triple: 'x86_64-pc-windows-msvc'
+          - platform: ubuntu-22.04
+            args: ''
+            node-triple: 'x86_64-unknown-linux-gnu'
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      # ── Checkout ───────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Node.js (for server deps) ──────────────────────────────────────
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # ── Install server dependencies ────────────────────────────────────
+      - name: Install server dependencies
+        working-directory: server
+        run: npm ci --omit=dev
+
+      # ── Rust ───────────────────────────────────────────────────────────
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin' || '' }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      # ── Linux system deps ──────────────────────────────────────────────
+      - name: Install Linux deps
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev \
+            pkg-config
+
+      # ── Download bundled Node.js binary for this platform ─────────────
+      - name: Download Node.js binary (Unix)
+        if: matrix.platform != 'windows-latest'
+        run: |
+          NODE_VERSION="22.14.0"
+          TRIPLE="${{ matrix.node-triple }}"
+          DEST="src-tauri/bin"
+          mkdir -p "$DEST"
+
+          if [[ "$TRIPLE" == *"darwin"* ]]; then
+            ARCH=$(echo $TRIPLE | grep -o 'aarch64\|x86_64')
+            NODEARCH=$([ "$ARCH" = "aarch64" ] && echo "arm64" || echo "x64")
+            URL="https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-darwin-${NODEARCH}.tar.gz"
+            SUBDIR="node-v${NODE_VERSION}-darwin-${NODEARCH}/bin/node"
+          else
+            URL="https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.gz"
+            SUBDIR="node-v${NODE_VERSION}-linux-x64/bin/node"
+          fi
+
+          curl -fsSL "$URL" -o node.tar.gz
+          tar -xzf node.tar.gz
+          cp $(echo $SUBDIR) "$DEST/node-${TRIPLE}"
+          chmod +x "$DEST/node-${TRIPLE}"
+          echo "✓ Bundled $DEST/node-${TRIPLE}"
+
+      - name: Download Node.js binary (Windows)
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $NODE_VERSION = "22.14.0"
+          $DEST = "src-tauri\bin"
+          New-Item -ItemType Directory -Force -Path $DEST
+          $URL = "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-win-x64.zip"
+          Invoke-WebRequest -Uri $URL -OutFile node.zip
+          Expand-Archive -Path node.zip -DestinationPath .
+          Copy-Item "node-v$NODE_VERSION-win-x64\node.exe" "$DEST\node-x86_64-pc-windows-msvc.exe"
+          Write-Host "✓ Bundled $DEST\node-x86_64-pc-windows-msvc.exe"
+
+      # ── macOS code signing setup ───────────────────────────────────────
+      # Requires these GitHub repo secrets (Settings → Secrets → Actions):
+      #   APPLE_CERTIFICATE          — base64-encoded .p12 certificate
+      #   APPLE_CERTIFICATE_PASSWORD — password for the .p12
+      #   APPLE_SIGNING_IDENTITY     — e.g. "Developer ID Application: Your Name (TEAMID)"
+      #   APPLE_ID                   — your Apple ID email
+      #   APPLE_PASSWORD             — App-specific password (appleid.apple.com → Security)
+      #   APPLE_TEAM_ID              — 10-char team ID from developer.apple.com
+      - name: Import Apple certificate
+        if: startsWith(matrix.platform, 'macos')
+        env:
+          APPLE_CERTIFICATE:          ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "⚠ No Apple certificate — building unsigned (users will need to right-click → Open)"
+            exit 0
+          fi
+          KEYCHAIN_PATH=$RUNNER_TEMP/kairo.keychain-db
+          KEYCHAIN_PASSWORD=$(openssl rand -hex 16)
+          echo "$APPLE_CERTIFICATE" | base64 --decode > $RUNNER_TEMP/cert.p12
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import $RUNNER_TEMP/cert.p12 -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          echo "✓ Certificate imported"
+
+      # ── Build KAIRO with Tauri ─────────────────────────────────────────
+      - name: Build KAIRO
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+          # ── Updater signing (required for auto-update to work) ──────────
+          # Generate a keypair once with: npx @tauri-apps/cli signer generate
+          # Add the private key as TAURI_SIGNING_PRIVATE_KEY in GitHub secrets.
+          # Paste the public key into src-tauri/tauri.conf.json → plugins.updater.pubkey
+          TAURI_SIGNING_PRIVATE_KEY:          ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+          # ── macOS notarization ─────────────────────────────────────────
+          # Leave these blank/absent to build unsigned (fine for internal use).
+          APPLE_CERTIFICATE:          ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY:     ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID:                   ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD:             ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID:              ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          tagName:     ${{ github.ref_name }}
+          releaseName: 'KAIRO ${{ github.ref_name }}'
+          releaseBody: |
+            ## KAIRO ${{ github.ref_name }}
+
+            **AI-powered live Bible verse detection for church services.**
+
+            ### What you need
+            - **Deepgram API key** — free at [deepgram.com](https://deepgram.com) (12,000 min/month free)
+            - Audio source: line-in from mixing board or device mic
+            - macOS, Windows, or Linux
+
+            ### Optional integrations
+            - ProPresenter (REST API)
+            - OBS (WebSocket)
+            - Syphon / External Display (macOS)
+
+            ### Install
+            - **macOS**: Download `.dmg`, open, drag to Applications
+            - **Windows**: Download `.msi` installer, run it
+            - **Linux**: Download `.AppImage`, `chmod +x`, run
+
+            > First launch: enter your Deepgram API key in Settings → Audio
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
+
+  # ── Deploy landing page to GitHub Pages ─────────────────────────────────
+  deploy-page:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+      - id: deploy
+        uses: actions/deploy-pages@v4

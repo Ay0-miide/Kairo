@@ -479,9 +479,100 @@ function parseAllSpokenReferences(text, inBibleMode = false) {
   return refs;
 }
 
+// ── Reference Context ─────────────────────────────────────────────────────
+// Tracks the last cited book/chapter so bare verse references like
+// "verse 17" or "and verse 18 says" can be resolved in context.
+// Context expires after 90 seconds of no explicit citation.
+
+const CONTEXT_EXPIRE_MS = 90000;
+
+class ReferenceContext {
+  constructor() {
+    this._book      = null;
+    this._chapter   = null;
+    this._updatedAt = 0;
+  }
+
+  // Update with a fully resolved reference.
+  update(book, chapter) {
+    if (!book) return;
+    this._book      = book;
+    if (chapter) this._chapter = chapter;
+    this._updatedAt = Date.now();
+  }
+
+  // Check if context is still valid.
+  get isValid() {
+    return !!this._book && (Date.now() - this._updatedAt) < CONTEXT_EXPIRE_MS;
+  }
+
+  get book()    { return this.isValid ? this._book    : null; }
+  get chapter() { return this.isValid ? this._chapter : null; }
+
+  reset() {
+    this._book = null; this._chapter = null; this._updatedAt = 0;
+  }
+}
+
+// Singleton shared across the process (imported by server.js).
+const referenceContext = new ReferenceContext();
+
+// ── Bare verse resolver ───────────────────────────────────────────────────
+// Detects spoken patterns like "verse 17", "verses 3 through 5",
+// "and verse eighteen" and resolves them against the current context.
+// Returns null if no context or no bare verse pattern found.
+
+const BARE_VERSE_PATTERNS = [
+  // "verse 17" / "verses 3 to 5" / "verse three"
+  /\b(?:and\s+)?(?:verse|verses|vers)\s+(\w+)(?:\s+(?:to|through|-)\s+(\w+))?/i,
+  // "chapter 3 verse 17" with no book — only if we have a book in context
+  /\bchapter\s+(\w+)\s+(?:verse|verses|vers)\s+(\w+)/i,
+];
+
+function resolvePartialReference(text) {
+  if (!referenceContext.isValid) return null;
+
+  const clean = text.toLowerCase().replace(/[.,!?;]/g, ' ').replace(/\s+/g, ' ').trim();
+
+  // Pattern 1: bare "verse N" or "verses N to M"
+  const bareMatch = clean.match(/\b(?:and\s+)?(?:verse|verses|vers)\s+(\w[\w\s]*?)(?:\s+(?:to|through)\s+(\w+))?(?:\s|$)/i);
+  if (bareMatch) {
+    const verseStart = spokenToNumber(bareMatch[1].trim());
+    if (verseStart && verseStart >= 1 && verseStart <= 176) {
+      const book    = referenceContext.book;
+      const chapter = referenceContext.chapter;
+      if (!chapter) return null;
+      if (bareMatch[2]) {
+        const verseEnd = spokenToNumber(bareMatch[2].trim());
+        if (verseEnd && verseEnd >= verseStart) {
+          return { book, chapter, verseStart, verseEnd, partial: true };
+        }
+      }
+      return { book, chapter, verse: verseStart, partial: true };
+    }
+  }
+
+  // Pattern 2: "chapter N verse M" with no book
+  const chapVerseMatch = clean.match(/\bchapter\s+(\w+)\s+(?:verse|verses|vers)\s+(\w+)/i);
+  if (chapVerseMatch) {
+    const chapter = spokenToNumber(chapVerseMatch[1]);
+    const verse   = spokenToNumber(chapVerseMatch[2]);
+    if (chapter && verse && referenceContext.book) {
+      const maxCh = MAX_CHAPTERS[referenceContext.book];
+      if (!maxCh || chapter <= maxCh) {
+        return { book: referenceContext.book, chapter, verse, partial: true };
+      }
+    }
+  }
+
+  return null;
+}
+
 module.exports = {
   parseSpokenReference,
   parseAllSpokenReferences,
+  resolvePartialReference,
+  referenceContext,
   BOOK_ALIASES,
   SINGLE_WORD_BOOKS,
   NUMBERED_BOOK_VARIANTS,

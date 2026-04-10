@@ -3,13 +3,13 @@
   "version": "2.0.0",
   "identifier": "com.kairo.scripture",
   "build": {
-    "beforeDevCommand": "node server/server.js",
+    "beforeDevCommand": "",
     "devUrl": "http://localhost:7777",
     "beforeBuildCommand": "",
     "frontendDist": "http://localhost:7777"
   },
   "app": {
-    "withGlobalTauri": false,
+    "withGlobalTauri": true,
     "windows": [
       {
         "label": "main",
@@ -28,6 +28,16 @@
       }
     ]
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVDRjVCODQwQjZFNkY2MEYKUldRUDl1YTJRTGoxN0I2NjJiOXlaWENvMmFJc0s5dkZ4WnVVZlF4N1c4a2NSOWxiTVZ3VXQ0cFAK",
+      "endpoints": [
+        "https://github.com/YOUR_GITHUB_USERNAME/KAIRO/releases/latest/download/latest.json"
+      ],
+      "dialog": false,
+      "windows": { "installMode": "passive" }
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",
@@ -40,8 +50,27 @@
     ],
     "resources": {
       "../server": "server",
-      "../databases": "databases"
+      "../databases/logos/map.json": "databases/logos/map.json",
+      "../databases/logos/kjv.json": "databases/logos/kjv.json"
     },
-    "externalBin": []
+    "externalBin": [
+      "bin/node"
+    ],
+    "linux": {
+      "deb": { "depends": ["libwebkit2gtk-4.1-0", "libssl3"] }
+    },
+    "macOS": {
+      "minimumSystemVersion": "12.0",
+      "entitlements": null,
+      "exceptionDomain": "",
+      "signingIdentity": null
+    },
+    "windows": {
+      "digestAlgorithm": "sha256",
+      "certificateThumbprint": null,
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      }
+    }
   }
 }
