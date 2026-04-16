@@ -156,7 +156,7 @@ async function testOBSConnection(url, password) {
 
 // Connect OBS on startup if enabled
 setTimeout(() => {
-  if (loadSettings().obsEnabled) connectOBS().catch(() => {});
+  if (loadSettings().obsEnabled) connectOBS().catch(err => console.warn('[OBS] Initial connect failed:', err.message));
 }, 2000);
 
 // ── Detection Worker ──────────────────────────────────────────────────────
@@ -207,6 +207,8 @@ function workerCall(type, payload, timeoutMs = 6000) {
     const id = ++workerMsgId;
     const timeout = setTimeout(() => {
       pendingCallbacks.delete(id);
+      console.warn(`[Server] Worker timeout (${type}) after ${timeoutMs}ms`);
+      broadcast({ type: 'worker-timeout', op: type, timeoutMs });
       reject(new Error(`Worker timeout: ${type}`));
     }, timeoutMs);
     pendingCallbacks.set(id, { resolve, reject, timeout });
@@ -706,7 +708,7 @@ app.post('/api/settings', (req, res) => {
   saveSettings(updated);
   settings = updated;
   const obsChanged = req.body.obsEnabled !== undefined || req.body.obsUrl !== undefined || req.body.obsPassword !== undefined;
-  if (obsChanged) connectOBS().catch(() => {});
+  if (obsChanged) connectOBS().catch(err => console.warn('[OBS] Reconnect-on-settings-change failed:', err.message));
   res.json({ ok: true });
 });
 
@@ -1025,7 +1027,7 @@ async function startDeepgram(config = {}) {
                 // delay. Throttled to once per 800ms so the worker isn't hammered.
                 if (interimWords >= 6 && now - lastInterimVerbatim > INTERIM_VERBATIM_MS) {
                   lastInterimVerbatim = now;
-                  processVerbatim(transcript).catch(() => {});
+                  processVerbatim(transcript).catch(err => console.warn('[Detection] processVerbatim failed:', err.message));
                 }
 
                 // Fingerprint on longer interim segments for paraphrase detection
@@ -1109,7 +1111,7 @@ async function startDeepgram(config = {}) {
             // so we don't miss an obvious exact-match quote mid-sentence
             const interimWords = transcript.split(/\s+/).filter(Boolean).length;
             if (interimWords >= 8) {
-              processVerbatim(transcript).catch(() => {});
+              processVerbatim(transcript).catch(err => console.warn('[Detection] processVerbatim failed:', err.message));
             }
           }
 
@@ -1131,12 +1133,27 @@ async function startDeepgram(config = {}) {
       deepgramConnection.on(LiveTranscriptionEvents.Error, (err) => {
         clearInterval(deepgramKeepAliveTimer);
         clearInterval(deepgramSilenceWatchdog);
-        const msg = err?.message || err?.reason || err?.description
+        const rawMsg = err?.message || err?.reason || err?.description
           || (typeof err === 'string' ? err : JSON.stringify(err));
-        console.error('[Deepgram] Error:', msg);
+        const code = err?.code || err?.statusCode || err?.status;
+        const lc   = (rawMsg || '').toLowerCase();
+        // Classify so the UI can surface something actionable.
+        let kind = 'unknown';
+        let friendly = rawMsg;
+        if (code === 401 || code === 403 || lc.includes('unauthorized') || lc.includes('invalid api key') || lc.includes('forbidden')) {
+          kind = 'auth';
+          friendly = 'Deepgram rejected the API key. Open Settings → paste a valid key.';
+        } else if (code === 429 || lc.includes('quota') || lc.includes('rate limit') || lc.includes('insufficient')) {
+          kind = 'quota';
+          friendly = 'Deepgram quota or rate limit reached. Check your Deepgram balance.';
+        } else if (lc.includes('enotfound') || lc.includes('econnrefused') || lc.includes('etimedout') || lc.includes('network') || lc.includes('getaddrinfo')) {
+          kind = 'network';
+          friendly = 'Network error reaching Deepgram. Check your internet connection.';
+        }
+        console.error(`[Deepgram] Error (${kind}):`, rawMsg);
         connectionState = 'error';
-        broadcast({ type: 'connection-state', state: 'error', error: msg });
-        resolve({ error: msg });
+        broadcast({ type: 'connection-state', state: 'error', error: friendly, errorKind: kind });
+        resolve({ error: friendly, errorKind: kind });
       });
 
       deepgramConnection.on(LiveTranscriptionEvents.Close, (code) => {
@@ -1158,7 +1175,7 @@ async function startDeepgram(config = {}) {
           console.log(`[Deepgram] Connection closed (code ${code}) — reconnecting in 1.5s…`);
           broadcast({ type: 'connection-state', state: 'reconnecting' });
           // Submit any buffered audio via REST before reconnecting
-          submitDeepgramRestFallback().catch(() => {});
+          submitDeepgramRestFallback().catch(err => console.warn('[Deepgram] REST fallback dispatch failed:', err.message));
           setTimeout(() => {
             if (!deepgramUserStopped) {
               startDeepgram(deepgramLastConfig).catch(err => {
@@ -1283,7 +1300,7 @@ async function processForReferences(transcript, isFinal) {
           if (vKey !== lastSentRef || now - lastSentTime >= SEND_DEDUP_MS) {
             lastSentBook     = verses[0].book;
             lastSentBookTime = now;
-            sendToOutputs(verses[0]).catch(() => {});
+            sendToOutputs(verses[0]).catch(err => console.warn('[Server] sendToOutputs failed:', err.message));
           }
         }
       }
@@ -1478,7 +1495,7 @@ function broadcastDetection(verses, method, topScore, target) {
     if (vKey !== lastSentRef || now - lastSentTime >= SEND_DEDUP_MS) {
       lastSentBook     = verses[0].book;
       lastSentBookTime = now;
-      sendToOutputs(verses[0]).catch(() => {});
+      sendToOutputs(verses[0]).catch(err => console.warn('[Server] sendToOutputs failed:', err.message));
     }
   }
 }
@@ -1487,8 +1504,8 @@ function broadcastDetection(verses, method, topScore, target) {
 async function sendToOutputs(verse) {
   const s = loadSettings();
   const tasks = [];
-  if (s.proPresenterEnabled !== false) tasks.push(sendToProPresenter(verse).catch(() => {}));
-  if (s.obsEnabled && obsConnected)    tasks.push(sendToOBS(verse).catch(() => {}));
+  if (s.proPresenterEnabled !== false) tasks.push(sendToProPresenter(verse).catch(err => console.warn('[ProPresenter] send failed:', err.message)));
+  if (s.obsEnabled && obsConnected)    tasks.push(sendToOBS(verse).catch(err => console.warn('[OBS] send failed:', err.message)));
   await Promise.all(tasks);
 }
 

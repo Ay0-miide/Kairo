@@ -49,6 +49,7 @@ fn find_bundled_node() -> Option<std::path::PathBuf> {
 
 // ── Server launcher ───────────────────────────────────────────────────────
 
+#[cfg_attr(debug_assertions, allow(dead_code))]
 fn start_server(app: &AppHandle) -> Option<Child> {
     // Resolve Node.js binary
     #[cfg(debug_assertions)]
@@ -174,8 +175,18 @@ pub fn run() {
             let handle = app.handle().clone();
 
             // Start the bundled Node.js server.
-            let child = start_server(&handle);
-            *app.state::<ServerProcess>().0.lock().unwrap() = child;
+            // In dev, the server is started by `beforeDevCommand` in tauri.conf.json
+            // so we don't spawn a second one (which would collide on port 7777).
+            #[cfg(not(debug_assertions))]
+            {
+                let child = start_server(&handle);
+                *app.state::<ServerProcess>().0.lock().unwrap() = child;
+            }
+            #[cfg(debug_assertions)]
+            {
+                println!("[KAIRO] Dev mode — server started externally via beforeDevCommand.");
+                let _ = &handle; // keep handle alive for use below
+            }
 
             // Poll /health until the server responds, then show the window.
             // Max wait: 15 seconds (30 × 500ms).

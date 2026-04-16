@@ -733,7 +733,7 @@ async function startListening() {
 }
 
 async function stopListening() {
-  await fetch(`${SERVER}/api/stop-listening`, { method: 'POST' }).catch(() => {});
+  await fetch(`${SERVER}/api/stop-listening`, { method: 'POST' }).catch(err => console.warn('[KAIRO] stop-listening request failed:', err.message));
   stopAudioCapture();
   clearInterval(elapsedInterval);
 }
@@ -1048,7 +1048,7 @@ clearLockedBtn?.addEventListener('click', async () => {
   rangeRefs = new Set();
   if (previewVerseText) previewVerseText.textContent = 'Nothing on display';
   if (previewVerseRef)  previewVerseRef.textContent  = '';
-  await fetch(`${SERVER}/api/propresenter/clear`, { method: 'POST' }).catch(() => {});
+  await fetch(`${SERVER}/api/propresenter/clear`, { method: 'POST' }).catch(err => console.warn('[KAIRO] propresenter/clear request failed:', err.message));
 });
 
 clearSuggestionsBtn?.addEventListener('click', () => {
