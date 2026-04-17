@@ -13,9 +13,8 @@ databases/settings.json
 # Large binary / model files
 databases/logos/ivf.faiss
 databases/logos/verses.bin
-databases/logos/map.json
-databases/logos/kjv.json
 databases/logos/model/
+# map.json and kjv.json are required by the Tauri bundle — committed.
 
 # Tauri build output
 src-tauri/target/
