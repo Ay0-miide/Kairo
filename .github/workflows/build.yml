@@ -8,6 +8,8 @@ on:
 
 jobs:
   build:
+    permissions:
+      contents: write   # required so tauri-action can create the GitHub release
     strategy:
       fail-fast: false
       matrix:
@@ -105,58 +107,26 @@ jobs:
           Copy-Item "node-v$NODE_VERSION-win-x64\node.exe" "$DEST\node-x86_64-pc-windows-msvc.exe"
           Write-Host "✓ Bundled $DEST\node-x86_64-pc-windows-msvc.exe"
 
-      # ── macOS code signing setup ───────────────────────────────────────
-      # Requires these GitHub repo secrets (Settings → Secrets → Actions):
-      #   APPLE_CERTIFICATE          — base64-encoded .p12 certificate
-      #   APPLE_CERTIFICATE_PASSWORD — password for the .p12
-      #   APPLE_SIGNING_IDENTITY     — e.g. "Developer ID Application: Your Name (TEAMID)"
-      #   APPLE_ID                   — your Apple ID email
-      #   APPLE_PASSWORD             — App-specific password (appleid.apple.com → Security)
-      #   APPLE_TEAM_ID              — 10-char team ID from developer.apple.com
-      - name: Import Apple certificate
-        if: startsWith(matrix.platform, 'macos')
-        env:
-          APPLE_CERTIFICATE:          ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-        run: |
-          if [ -z "$APPLE_CERTIFICATE" ]; then
-            echo "⚠ No Apple certificate — building unsigned (users will need to right-click → Open)"
-            exit 0
-          fi
-          KEYCHAIN_PATH=$RUNNER_TEMP/kairo.keychain-db
-          KEYCHAIN_PASSWORD=$(openssl rand -hex 16)
-          echo "$APPLE_CERTIFICATE" | base64 --decode > $RUNNER_TEMP/cert.p12
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security import $RUNNER_TEMP/cert.p12 -P "$APPLE_CERTIFICATE_PASSWORD" \
-            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
-          security list-keychain -d user -s "$KEYCHAIN_PATH"
-          echo "✓ Certificate imported"
-
       # ── Build KAIRO with Tauri ─────────────────────────────────────────
+      # Note: macOS builds use ad-hoc signing (APPLE_SIGNING_IDENTITY: '-').
+      # Users will need to right-click → Open on first launch.
+      # To enable proper Developer ID signing + notarization, restore the
+      # APPLE_CERTIFICATE / APPLE_ID / APPLE_TEAM_ID secrets and pass them here.
       - name: Build KAIRO
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
           # ── Updater signing (required for auto-update to work) ──────────
-          # Generate a keypair once with: npx @tauri-apps/cli signer generate
-          # Add the private key as TAURI_SIGNING_PRIVATE_KEY in GitHub secrets.
-          # Paste the public key into src-tauri/tauri.conf.json → plugins.updater.pubkey
           TAURI_SIGNING_PRIVATE_KEY:          ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
-          # ── macOS notarization ─────────────────────────────────────────
-          # Only pass these when an actual certificate secret is set.
-          # Tauri treats empty strings as "try to sign with nothing" and
-          # fails codesign, so absent-is-safer than empty.
-          APPLE_CERTIFICATE:          ${{ secrets.APPLE_CERTIFICATE          && secrets.APPLE_CERTIFICATE          || '' }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
-          APPLE_SIGNING_IDENTITY:     ${{ secrets.APPLE_CERTIFICATE          && secrets.APPLE_SIGNING_IDENTITY     || '-' }}
-          APPLE_ID:                   ${{ secrets.APPLE_CERTIFICATE          && secrets.APPLE_ID                   || '' }}
-          APPLE_PASSWORD:             ${{ secrets.APPLE_CERTIFICATE          && secrets.APPLE_PASSWORD             || '' }}
-          APPLE_TEAM_ID:              ${{ secrets.APPLE_CERTIFICATE          && secrets.APPLE_TEAM_ID              || '' }}
+          # ── macOS ad-hoc signing only (no Developer ID required) ───────
+          APPLE_SIGNING_IDENTITY: '-'
+
+          # ── Linux AppImage workaround ──────────────────────────────────
+          # Ubuntu 22.04 + libwebkit2gtk 4.1 trips linuxdeploy's strip pass.
+          NO_STRIP: 'true'
         with:
           tagName:     ${{ github.ref_name }}
           releaseName: 'KAIRO ${{ github.ref_name }}'
