@@ -148,13 +148,15 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
           # ── macOS notarization ─────────────────────────────────────────
-          # Leave these blank/absent to build unsigned (fine for internal use).
-          APPLE_CERTIFICATE:          ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY:     ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID:                   ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD:             ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID:              ${{ secrets.APPLE_TEAM_ID }}
+          # Only pass these when an actual certificate secret is set.
+          # Tauri treats empty strings as "try to sign with nothing" and
+          # fails codesign, so absent-is-safer than empty.
+          APPLE_CERTIFICATE:          ${{ secrets.APPLE_CERTIFICATE          && secrets.APPLE_CERTIFICATE          || '' }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
+          APPLE_SIGNING_IDENTITY:     ${{ secrets.APPLE_CERTIFICATE          && secrets.APPLE_SIGNING_IDENTITY     || '-' }}
+          APPLE_ID:                   ${{ secrets.APPLE_CERTIFICATE          && secrets.APPLE_ID                   || '' }}
+          APPLE_PASSWORD:             ${{ secrets.APPLE_CERTIFICATE          && secrets.APPLE_PASSWORD             || '' }}
+          APPLE_TEAM_ID:              ${{ secrets.APPLE_CERTIFICATE          && secrets.APPLE_TEAM_ID              || '' }}
         with:
           tagName:     ${{ github.ref_name }}
           releaseName: 'KAIRO ${{ github.ref_name }}'
