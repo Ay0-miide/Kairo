@@ -110,6 +110,46 @@
     }
     .dl-note a { color: var(--muted); }
 
+    /* ── First-launch callout ── */
+    .first-launch {
+      max-width: 640px; margin: 28px auto 0;
+      background: var(--bg-panel); border: 1px solid var(--border);
+      border-radius: 12px; padding: 18px 22px;
+      text-align: left; font-size: 13px; color: #ccc;
+    }
+    .first-launch summary {
+      cursor: pointer; font-weight: 600; color: var(--text);
+      display: flex; align-items: center; gap: 8px;
+      list-style: none; user-select: none;
+    }
+    .first-launch summary::-webkit-details-marker { display: none; }
+    .first-launch summary::before {
+      content: ''; width: 14px; height: 14px;
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2'><polyline points='9 18 15 12 9 6'/></svg>");
+      background-size: contain; background-repeat: no-repeat;
+      transition: transform 0.15s;
+    }
+    .first-launch[open] summary::before { transform: rotate(90deg); }
+    .first-launch .fl-body { margin-top: 14px; line-height: 1.7; }
+    .first-launch .fl-body strong { color: var(--text); }
+    .first-launch code {
+      background: rgba(255,255,255,0.06); padding: 2px 6px;
+      border-radius: 4px; font-size: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: #e8e8e8;
+    }
+    .first-launch .fl-platform {
+      margin-top: 12px; padding-top: 12px;
+      border-top: 1px solid var(--border);
+    }
+    .first-launch .fl-platform:first-child { margin-top: 0; padding-top: 0; border-top: none; }
+    .first-launch .fl-platform h4 {
+      font-size: 12px; font-weight: 700; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px;
+    }
+    .first-launch ol { padding-left: 18px; margin-top: 4px; }
+    .first-launch li { margin-bottom: 4px; }
+
     /* version pill */
     #version-badge {
       display: inline-block; margin-bottom: 12px;
@@ -259,14 +299,7 @@
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
         <span class="dl-label">
           <span>Download for Mac</span>
-          <span class="dl-sub">Apple Silicon (.dmg)</span>
-        </span>
-      </a>
-      <a class="dl-btn loading" href="#" id="dl-mac-intel">
-        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
-        <span class="dl-label">
-          <span>Download for Mac</span>
-          <span class="dl-sub">Intel (.dmg)</span>
+          <span class="dl-sub">Apple Silicon · Intel via Rosetta</span>
         </span>
       </a>
       <a class="dl-btn loading" href="#" id="dl-win">
@@ -276,16 +309,49 @@
           <span class="dl-sub">.msi installer</span>
         </span>
       </a>
-      <a class="dl-btn loading" href="#" id="dl-linux">
+      <a class="dl-btn loading" href="#" id="dl-linux-deb">
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M20.581 19.049c-.55-.446-.336-1.431-.907-1.917.553-3.365-.997-6.331-2.843-8.573C15.897 7.222 15.052 5.857 14.3 4.8c-.576-.82-1.054-1.78-2.3-1.8-1.246.02-1.724.98-2.3 1.8-.752 1.057-1.597 2.422-2.531 3.759C4.997 10.801 3.447 13.766 4 17.132c-.571.486-.357 1.471-.907 1.917-.552.448-1.357.223-1.357.948 0 .727.915.727.915 1.453s-.375.727-.375 1.453h12.45c0-.726-.375-.727-.375-1.453s.915-.726.915-1.453c0-.725-.805-.5-1.357-.948h-.009zM12 4c.5 0 1 .5 1 1s-.5 1-1 1-1-.5-1-1 .5-1 1-1z"/></svg>
         <span class="dl-label">
           <span>Download for Linux</span>
-          <span class="dl-sub">.AppImage</span>
+          <span class="dl-sub">.deb (Debian/Ubuntu) · <a href="#" id="dl-linux-rpm-link" style="color:inherit;text-decoration:underline">.rpm</a></span>
         </span>
       </a>
     </div>
 
     <p class="dl-note" id="dl-note">Fetching latest release from GitHub…</p>
+
+    <details class="first-launch">
+      <summary>First launch instructions (read me — installers are unsigned)</summary>
+      <div class="fl-body">
+        <p style="margin-bottom:14px;color:#aaa;">KAIRO is open source and free, so we don't pay Apple's $99/yr Developer ID or Microsoft's SmartScreen fee. Your OS will warn you on first launch — here's the one-time bypass for each platform:</p>
+
+        <div class="fl-platform">
+          <h4>macOS</h4>
+          <ol>
+            <li>Drag <strong>KAIRO.app</strong> from the DMG into <strong>Applications</strong>.</li>
+            <li><strong>Right-click</strong> KAIRO in Applications → <strong>Open</strong>.</li>
+            <li>If you only see "Move to Trash", click <strong>Done</strong>, then open <strong>System Settings → Privacy &amp; Security</strong>, scroll to the bottom, and click <strong>Open Anyway</strong>.</li>
+          </ol>
+          <p style="margin-top:8px;color:#888;font-size:12px;">Or run once in Terminal: <code>xattr -dr com.apple.quarantine /Applications/KAIRO.app</code></p>
+        </div>
+
+        <div class="fl-platform">
+          <h4>Windows</h4>
+          <ol>
+            <li>Run the <code>.msi</code>. SmartScreen will say "Windows protected your PC".</li>
+            <li>Click <strong>More info</strong> → <strong>Run anyway</strong>.</li>
+          </ol>
+        </div>
+
+        <div class="fl-platform">
+          <h4>Linux</h4>
+          <ol>
+            <li><strong>Debian/Ubuntu:</strong> <code>sudo dpkg -i KAIRO_*.deb</code> then launch from your apps menu.</li>
+            <li><strong>Fedora/RHEL:</strong> <code>sudo rpm -i KAIRO-*.rpm</code></li>
+          </ol>
+        </div>
+      </div>
+    </details>
   </section>
 
   <!-- ── Demo placeholder ── -->
@@ -428,7 +494,7 @@
   <footer>
     <p>
       KAIRO is free and open source.
-      <a href="https://github.com/Ay0-miide/Kairo" target="_blank" rel="noopener">View on GitHub</a>
+      <a href="https://github.com/Kairo-live/Kairo" target="_blank" rel="noopener">View on GitHub</a>
       &nbsp;·&nbsp;
       Built for church tech teams, by church tech teams.
     </p>
@@ -436,14 +502,15 @@
 
   <script>
     // ── Fetch latest release from GitHub and populate download buttons ─────
-    const REPO = 'Ay0-miide/Kairo';
+    const REPO = 'Kairo-live/Kairo';
 
     const dlMap = {
-      'dl-mac-arm':   name => name.endsWith('.dmg') && name.includes('aarch64'),
-      'dl-mac-intel': name => name.endsWith('.dmg') && name.includes('x86_64'),
+      'dl-mac-arm':   name => name.endsWith('.dmg'),
       'dl-win':       name => name.endsWith('.msi'),
-      'dl-linux':     name => name.endsWith('.AppImage'),
+      'dl-linux-deb': name => name.endsWith('.deb'),
     };
+    // .rpm gets its own inline link inside the Linux button sublabel
+    const rpmMatcher = name => name.endsWith('.rpm');
 
     async function populateDownloads() {
       try {
@@ -467,6 +534,14 @@
             btn.classList.add('loading');
             btn.title = 'Not available in this release';
           }
+        }
+
+        // .rpm inline link inside the Linux button sublabel
+        const rpmAsset = data.assets.find(a => rpmMatcher(a.name));
+        const rpmLink  = document.getElementById('dl-linux-rpm-link');
+        if (rpmAsset && rpmLink) {
+          rpmLink.href = rpmAsset.browser_download_url;
+          rpmLink.addEventListener('click', e => e.stopPropagation());
         }
       } catch (e) {
         document.getElementById('version-badge').textContent = 'See GitHub for downloads';

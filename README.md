@@ -43,7 +43,7 @@ KAIRO listens to a preacher in real time, detects scripture references from spee
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/Ay0-miide/Kairo.git
+git clone https://github.com/Kairo-live/Kairo.git
 cd Kairo
 
 # 2. Install dependencies
