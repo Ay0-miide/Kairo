@@ -14,9 +14,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: macos-latest   # Apple Silicon (arm64) — Intel users run via Rosetta
-            args: '--target aarch64-apple-darwin'
-            node-triple: 'aarch64-apple-darwin'
+          - platform: macos-latest   # Universal binary — runs native on Intel AND Apple Silicon
+            args: '--target universal-apple-darwin'
+            node-triple: 'universal-apple-darwin'
           - platform: windows-latest
             args: ''
             node-triple: 'x86_64-pc-windows-msvc'
@@ -49,7 +49,8 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin' || '' }}
+          # macOS universal needs both targets so Tauri can lipo them into a fat binary
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -70,29 +71,39 @@ jobs:
             pkg-config
 
       # ── Download bundled Node.js binary for this platform ─────────────
+      # macOS universal-apple-darwin: download BOTH arm64 + x64 node binaries.
+      # Tauri's sidecar pipeline uses `lipo` to combine them into a fat binary.
       - name: Download Node.js binary (Unix)
         if: matrix.platform != 'windows-latest'
         run: |
+          set -euo pipefail
           NODE_VERSION="22.14.0"
           TRIPLE="${{ matrix.node-triple }}"
           DEST="src-tauri/bin"
           mkdir -p "$DEST"
 
-          if [[ "$TRIPLE" == *"darwin"* ]]; then
-            ARCH=$(echo $TRIPLE | grep -o 'aarch64\|x86_64')
-            NODEARCH=$([ "$ARCH" = "aarch64" ] && echo "arm64" || echo "x64")
-            URL="https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-darwin-${NODEARCH}.tar.gz"
-            SUBDIR="node-v${NODE_VERSION}-darwin-${NODEARCH}/bin/node"
-          else
-            URL="https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.gz"
-            SUBDIR="node-v${NODE_VERSION}-linux-x64/bin/node"
-          fi
+          fetch_node() {
+            local os="$1" nodearch="$2" triple="$3"
+            local url="https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-${os}-${nodearch}.tar.gz"
+            local subdir="node-v${NODE_VERSION}-${os}-${nodearch}/bin/node"
+            local tmp="node-${triple}.tar.gz"
+            curl -fsSL "$url" -o "$tmp"
+            tar -xzf "$tmp"
+            cp "$subdir" "$DEST/node-${triple}"
+            chmod +x "$DEST/node-${triple}"
+            echo "✓ Bundled $DEST/node-${triple}"
+          }
 
-          curl -fsSL "$URL" -o node.tar.gz
-          tar -xzf node.tar.gz
-          cp $(echo $SUBDIR) "$DEST/node-${TRIPLE}"
-          chmod +x "$DEST/node-${TRIPLE}"
-          echo "✓ Bundled $DEST/node-${TRIPLE}"
+          if [[ "$TRIPLE" == "universal-apple-darwin" ]]; then
+            fetch_node darwin arm64 aarch64-apple-darwin
+            fetch_node darwin x64   x86_64-apple-darwin
+          elif [[ "$TRIPLE" == *"darwin"* ]]; then
+            ARCH=$(echo "$TRIPLE" | grep -o 'aarch64\|x86_64')
+            NODEARCH=$([ "$ARCH" = "aarch64" ] && echo "arm64" || echo "x64")
+            fetch_node darwin "$NODEARCH" "$TRIPLE"
+          else
+            fetch_node linux x64 "$TRIPLE"
+          fi
 
       - name: Download Node.js binary (Windows)
         if: matrix.platform == 'windows-latest'

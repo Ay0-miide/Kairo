@@ -479,12 +479,94 @@ function parseAllSpokenReferences(text, inBibleMode = false) {
   return refs;
 }
 
+// ── Bare book detection ───────────────────────────────────────────────────
+// Scans text for bare book mentions (e.g. "Exodus" on its own, or "1 John"
+// with no chapter/verse). Used to hold book context across a monologue
+// between the book callout and the actual "chapter X verse Y".
+//
+// Rules for accepting a bare book:
+//   1. Numbered books ("1 John", "first corinthians") → always accept.
+//   2. Unambiguous single-word books (Leviticus, Deuteronomy, …) → accept.
+//   3. Ambiguous books (exodus, genesis, john, mark, …) → only when a
+//      "bible trigger phrase" precedes them (book of, turn to, read from, …)
+//      OR when we're already in bible mode.
+//
+// The trigger-phrase pass runs against the RAW (pre-healing) text because
+// the healing collapses "book of exodus" → "exodus" and would erase the
+// trigger. We scan triggers first, then run the healed pass for the rest.
+const BIBLE_TRIGGER_PHRASES = [
+  'book of', 'turn to', 'turn with me to', 'open to', 'open your bible to',
+  'read from', 'read in', 'read out of', 'scripture in', 'found in',
+  'writings of', 'gospel of', 'gospel according to', 'epistle of',
+  'letter of', 'letter to', 'prophet',
+];
+
+function detectBookMentions(text, inBibleMode = false) {
+  const lowered = text.toLowerCase().replace(/[.,!?;:]/g, ' ').replace(/\s+/g, ' ').trim();
+  const books = [];
+  const seen  = new Set();
+
+  // Pass 1 — trigger-phrase pass on RAW text. Accepts AMBIGUOUS books too.
+  for (const trigger of BIBLE_TRIGGER_PHRASES) {
+    let idx = 0;
+    while ((idx = lowered.indexOf(trigger, idx)) !== -1) {
+      const after = lowered.slice(idx + trigger.length).trimStart();
+      const afterWords = after.split(/\s+/, 3); // peek up to 3 tokens
+      // Numbered: "first john", "1 peter"
+      const num = getNumberedPrefix(afterWords[0]);
+      if (num && afterWords[1]) {
+        const key = `${num} ${afterWords[1]}`;
+        if (BOOK_ALIASES[key] && !seen.has(BOOK_ALIASES[key])) {
+          books.push(BOOK_ALIASES[key]);
+          seen.add(BOOK_ALIASES[key]);
+        }
+      } else if (afterWords[0] && SINGLE_WORD_BOOKS.has(afterWords[0])) {
+        const resolved = BOOK_ALIASES[afterWords[0]];
+        if (resolved && !seen.has(resolved)) { books.push(resolved); seen.add(resolved); }
+      }
+      idx += trigger.length;
+    }
+  }
+
+  // Pass 2 — healed pass. Accepts unambiguous books, or ambiguous when in bible mode.
+  let cleanText = cleanReferenceText(text);
+  for (const { find, replace, regex } of HEALING_COMPILED) {
+    if (!cleanText.includes(find)) continue;
+    regex.lastIndex = 0;
+    cleanText = cleanText.replace(regex, replace);
+  }
+  const words = cleanText.split(/\s+/);
+  for (let i = 0; i < words.length; i++) {
+    if (i + 1 < words.length) {
+      const num = getNumberedPrefix(words[i]);
+      if (num) {
+        const key = `${num} ${words[i + 1]}`;
+        if (BOOK_ALIASES[key] && !seen.has(BOOK_ALIASES[key])) {
+          books.push(BOOK_ALIASES[key]);
+          seen.add(BOOK_ALIASES[key]);
+          i++;
+          continue;
+        }
+      }
+    }
+    const w = words[i];
+    if (SINGLE_WORD_BOOKS.has(w)) {
+      if (!inBibleMode && AMBIGUOUS_BOOKS.has(w)) continue;
+      const resolved = BOOK_ALIASES[w];
+      if (resolved && !seen.has(resolved)) { books.push(resolved); seen.add(resolved); }
+    }
+  }
+  return books;
+}
+
 // ── Reference Context ─────────────────────────────────────────────────────
 // Tracks the last cited book/chapter so bare verse references like
 // "verse 17" or "and verse 18 says" can be resolved in context.
-// Context expires after 90 seconds of no explicit citation.
+// Context expires after 180 seconds of no explicit citation — long enough
+// to bridge a monologue between a bare book mention ("Exodus") and the
+// eventual chapter/verse call ("chapter 3 verse 13").
 
-const CONTEXT_EXPIRE_MS = 90000;
+const CONTEXT_EXPIRE_MS = 180000;
 
 class ReferenceContext {
   constructor() {
@@ -494,10 +576,17 @@ class ReferenceContext {
   }
 
   // Update with a fully resolved reference.
+  // - If `chapter` is provided, store it.
+  // - If `chapter` is null/undefined: preserve the current chapter ONLY when
+  //   the book hasn't changed. Switching books without a chapter clears the
+  //   stale chapter so a later bare "verse 13" can't resolve against the
+  //   previous book's chapter number.
   update(book, chapter) {
     if (!book) return;
+    const bookChanged = this._book !== book;
     this._book      = book;
     if (chapter) this._chapter = chapter;
+    else if (bookChanged) this._chapter = null;
     this._updatedAt = Date.now();
   }
 
@@ -534,7 +623,22 @@ function resolvePartialReference(text) {
 
   const clean = text.toLowerCase().replace(/[.,!?;]/g, ' ').replace(/\s+/g, ' ').trim();
 
-  // Pattern 1: bare "verse N" or "verses N to M"
+  // Pattern 1 (MORE SPECIFIC, try first): "chapter N verse M" with no book.
+  // Resolves when the preacher said a bare book ("Exodus") earlier, then
+  // followed up later with "chapter 3 verse 13".
+  const chapVerseMatch = clean.match(/\bchapter\s+(\w+)\s+(?:verse|verses|vers)\s+(\w+)/i);
+  if (chapVerseMatch) {
+    const chapter = spokenToNumber(chapVerseMatch[1]);
+    const verse   = spokenToNumber(chapVerseMatch[2]);
+    if (chapter && verse && referenceContext.book) {
+      const maxCh = MAX_CHAPTERS[referenceContext.book];
+      if (!maxCh || chapter <= maxCh) {
+        return { book: referenceContext.book, chapter, verse, partial: true };
+      }
+    }
+  }
+
+  // Pattern 2: bare "verse N" or "verses N to M" — needs a chapter in context.
   const bareMatch = clean.match(/\b(?:and\s+)?(?:verse|verses|vers)\s+(\w[\w\s]*?)(?:\s+(?:to|through)\s+(\w+))?(?:\s|$)/i);
   if (bareMatch) {
     const verseStart = spokenToNumber(bareMatch[1].trim());
@@ -552,19 +656,6 @@ function resolvePartialReference(text) {
     }
   }
 
-  // Pattern 2: "chapter N verse M" with no book
-  const chapVerseMatch = clean.match(/\bchapter\s+(\w+)\s+(?:verse|verses|vers)\s+(\w+)/i);
-  if (chapVerseMatch) {
-    const chapter = spokenToNumber(chapVerseMatch[1]);
-    const verse   = spokenToNumber(chapVerseMatch[2]);
-    if (chapter && verse && referenceContext.book) {
-      const maxCh = MAX_CHAPTERS[referenceContext.book];
-      if (!maxCh || chapter <= maxCh) {
-        return { book: referenceContext.book, chapter, verse, partial: true };
-      }
-    }
-  }
-
   return null;
 }
 
@@ -572,9 +663,11 @@ module.exports = {
   parseSpokenReference,
   parseAllSpokenReferences,
   resolvePartialReference,
+  detectBookMentions,
   referenceContext,
   BOOK_ALIASES,
   SINGLE_WORD_BOOKS,
+  AMBIGUOUS_BOOKS,
   NUMBERED_BOOK_VARIANTS,
   WORD_TO_NUM,
 };

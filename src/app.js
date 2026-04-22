@@ -16,6 +16,19 @@ function cleanVerseText(text) {
     .trim();
 }
 
+// "Matthew 17:21" → "MT·17"   |   "1 Chronicles 6:18" → "1CH·6"   |   "Song of Solomon 2:1" → "SO·2"
+// The badge pill has a fixed width; returning the full book name overflows it.
+function refToBadgeAbbr(reference) {
+  const parts = (reference || '').split(' ');
+  if (!parts.length) return '??';
+  const isNumbered = /^[123]$/.test(parts[0] || '');
+  const bookWord   = parts[isNumbered ? 1 : 0] || '';
+  const bookAbbr   = (isNumbered ? parts[0] : '') + bookWord.slice(0, 2).toUpperCase();
+  // Chapter always lives in the last whitespace-separated token (C:V form).
+  const chapNum    = (parts[parts.length - 1] || '').split(':')[0];
+  return bookAbbr + (chapNum ? '·' + chapNum : '');
+}
+
 // ── State ──────────────────────────────────────────────────────────────────
 let ws             = null;
 let wsReconnectTimer = null;
@@ -252,11 +265,11 @@ function handleTranscript(msg) {
 const CLIENT_VIEWER_MIN_SCORE = 0.80;
 
 function handleDetection(msg) {
-  const { verses, method, target, topScore } = msg;
+  const { verses, method, target, topScore, correctedFrom } = msg;
   if (!verses?.length) return;
 
   if (target === 'viewer' && (topScore == null || topScore >= CLIENT_VIEWER_MIN_SCORE)) {
-    showInViewer(verses, method, topScore);
+    showInViewer(verses, method, topScore, correctedFrom);
   } else {
     showInSuggestions(verses, method);
   }
@@ -269,12 +282,20 @@ function updateViewerDisplay(v) {
   if (previewVerseRef)  previewVerseRef.textContent  = v.reference || '';
 }
 
-function showInViewer(verses, method, topScore) {
+function showInViewer(verses, method, topScore, correctedFrom = null) {
   const v = verses[0];
 
   // Update live preview screen
   if (previewVerseText) previewVerseText.textContent = cleanVerseText(v.text);
   if (previewVerseRef)  previewVerseRef.textContent  = v.reference || '';
+
+  // Auto-correction: strip the mis-cited row so it doesn't linger above the fix.
+  if (correctedFrom) {
+    const stale = currentDisplayCard?.querySelector(`[data-ref="${CSS.escape(correctedFrom)}"]`);
+    stale?.remove();
+    const staleCand = queueList?.querySelector(`[data-ref="${CSS.escape(correctedFrom)}"]`);
+    staleCand?.remove();
+  }
 
   // ── Live Queue — the single list of sent + queued verses ──
   if (currentDisplayCard) {
@@ -294,7 +315,7 @@ function showInViewer(verses, method, topScore) {
         existing.classList.add('sent-pulse');
         currentDisplayCard.insertBefore(existing, currentDisplayCard.firstChild);
       } else {
-        const card = buildQueueRow(v, method);
+        const card = buildQueueRow(v, method, correctedFrom);
         currentDisplayCard.insertBefore(card, currentDisplayCard.firstChild);
         // Trim to keep session manageable (50 entries)
         const children = currentDisplayCard.children;
@@ -395,18 +416,18 @@ function buildCandidateCard(v, method, isSent = false) {
 }
 
 // Compact single-row card for the Live Queue section
-function buildQueueRow(v, method) {
+function buildQueueRow(v, method, correctedFrom = null) {
   const card = document.createElement('div');
   card.dataset.ref = v.reference;
-  card.className = 'locked-verse-card';
-  const refParts = (v.reference || '').split(' ');
-  const bookAbbr = refParts[0]?.slice(0, 2).toUpperCase() || '??';
-  const chapNum  = (refParts[1] || refParts[2] || '').split(':')[0];
-  const abbr     = bookAbbr + (chapNum ? '·' + chapNum : '');
+  card.className = 'locked-verse-card' + (correctedFrom ? ' corrected' : '');
+  const abbr = refToBadgeAbbr(v.reference);
+  const correctedChip = correctedFrom
+    ? `<span class="corrected-chip" title="Auto-corrected from ${correctedFrom}">corrected from ${correctedFrom}</span>`
+    : '';
   card.innerHTML = `
     <div class="history-book-badge">${abbr}</div>
     <div class="history-card-content">
-      <div class="lvc-ref">${v.reference}</div>
+      <div class="lvc-ref">${v.reference}${correctedChip}</div>
       <div class="lvc-text">${cleanVerseText(v.text)}</div>
     </div>
     <div class="lvc-actions">
@@ -447,11 +468,10 @@ function buildVerseCard(v, method, role) {
                     pct >= 80    ? 'conf-good' :
                     pct >= 60    ? 'conf-mid'  : 'conf-low';
 
-  // Short book abbreviation for history grid badge: "Matthew 17:21" → "MT·17"
-  const refParts = (v.reference || '').split(' ');
-  const bookAbbr = refParts[0]?.slice(0, 2).toUpperCase() || '??';
-  const chapNum  = (refParts[1] || refParts[2] || '').split(':')[0];
-  const abbr     = bookAbbr + (chapNum ? '·' + chapNum : '');
+  // Short book abbreviation for history grid badge: "Matthew 17:21" → "MT·17",
+  // "1 Chronicles 6:18" → "1CH·6". Without the numbered-book branch the pill
+  // overflows with the full book name.
+  const abbr = refToBadgeAbbr(v.reference);
 
   card.className = isSent ? 'locked-verse-card' : 'suggestion-card';
 
@@ -612,10 +632,7 @@ function buildRangeCard(v, isActive) {
   card.dataset.ref = v.reference;
   card.className   = 'range-verse-card locked-verse-card' + (isActive ? ' range-active' : ' range-queued');
 
-  const refParts = (v.reference || '').split(' ');
-  const bookAbbr = refParts[0]?.slice(0, 2).toUpperCase() || '??';
-  const chapNum  = (refParts[1] || '').split(':')[0];
-  const abbr     = bookAbbr + (chapNum ? '·' + chapNum : '');
+  const abbr = refToBadgeAbbr(v.reference);
 
   card.innerHTML = `
     <div class="history-book-badge range-book-badge">${abbr}</div>

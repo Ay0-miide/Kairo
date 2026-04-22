@@ -21,7 +21,7 @@ const { Worker } = require('worker_threads');
 const axios      = require('axios');
 const OBSWebSocket = require('obs-websocket-js/json').default;
 
-const { parseSpokenReference, parseAllSpokenReferences, resolvePartialReference, referenceContext, SINGLE_WORD_BOOKS } = require('./reference_parser');
+const { parseSpokenReference, parseAllSpokenReferences, resolvePartialReference, detectBookMentions, referenceContext, SINGLE_WORD_BOOKS } = require('./reference_parser');
 
 // ── Config ────────────────────────────────────────────────────────────────
 const PORT = 7777;
@@ -199,6 +199,22 @@ function spawnDetectionWorker() {
     pendingCallbacks.clear();
     broadcast({ type: 'worker-error', error: err.message });
   });
+
+  // If the worker exits for any reason, detection silently stops unless we
+  // flip the ready flag and respawn. Without this, every workerCall rejects
+  // after its timeout and references are lost with only a console warn.
+  detectionWorker.on('exit', (code) => {
+    console.warn(`[Server] Detection worker exited (code=${code}) — respawning`);
+    workerBasicReady = false;
+    for (const [id, cb] of pendingCallbacks) {
+      clearTimeout(cb.timeout);
+      cb.reject(new Error('Worker exited'));
+    }
+    pendingCallbacks.clear();
+    detectionWorker = null;
+    broadcast({ type: 'worker-error', error: `exit(${code})` });
+    setTimeout(spawnDetectionWorker, 500);
+  });
 }
 
 function workerCall(type, payload, timeoutMs = 6000) {
@@ -319,6 +335,16 @@ let sentenceBuffer = new SentenceBuffer(4000);
 // Suppress fingerprint search from routing to viewer for N ms after a direct reference
 let lastDirectRefTime = 0;
 const DIRECT_REF_SUPPRESS_MS = 12000;
+
+// Auto-correction window: if a direct ref was sent and within this window a
+// verbatim match (≥ 0.92 similarity) points at a *different* verse, we assume
+// the preacher mis-cited the reference and then read the correct verse
+// verbatim — replace on-air instead of queueing alongside.
+// Gated by settings.autoCorrect (default on) so the operator can disable.
+let lastDirectSentVerse = null;    // full verse object of the most recent direct-ref send
+let lastDirectSentTime  = 0;
+const CORRECTION_WINDOW_MS = 15000;
+const CORRECTION_MIN_SIMILARITY = 0.92;
 
 // ── Audio ring buffer (REST fallback on WS drop) ──────────────────────────
 // Keeps last 25s of raw PCM so we can submit to Deepgram REST if the
@@ -915,6 +941,11 @@ async function startDeepgram(config = {}) {
   audioRingBuffer = [];
   audioRingBytes  = 0;
 
+  // Clear streaming automaton state so a new session starts fresh.
+  if (workerBasicReady) {
+    workerCall('streamReset', {}, 1000).catch(() => {});
+  }
+
   try {
     connectionState = 'connecting';
     broadcast({ type: 'connection-state', state: 'connecting' });
@@ -1046,6 +1077,13 @@ async function startDeepgram(config = {}) {
           transcriptBuffer.push({ text: transcript, time: now, wordCount });
           while (transcriptBuffer.length && transcriptBuffer[0].time < now - 90000) transcriptBuffer.shift();
           hasNewTranscript = true;
+
+          // Streaming anchor match — runs FIRST, before any buffering or
+          // sentence accumulation, so a distinctive 4-gram surfaces as soon
+          // as its final word arrives (not after a punctuation boundary).
+          if (workerBasicReady) {
+            processStreamText(transcript).catch(() => {});
+          }
 
           // Feed speech into topic accumulator — builds the active verse library
           // passively in the background as the sermon progresses
@@ -1223,35 +1261,128 @@ function tryRangeAdvanceByRef(verses) {
   return false;
 }
 
+// ── Streaming anchor detection ────────────────────────────────────────────
+// Every final word is fed into the worker's 4-gram anchor trie + alignment
+// tracker (Layer 1 + Layer 2). No sentence buffer, no throttle.
+//
+//   • Anchor-only hits (4 distinctive words match) → 'suggestions' at 0.80.
+//   • Confirmed hits (≥6 words align in sequence) → 'viewer' at 0.90+.
+//
+// Ties broken by:
+//   1. Confirmed > anchor-only
+//   2. Topic library membership (sermon's active theme)
+//   3. Chapter proximity to recent citations (±5 chapters, decaying with age)
+//   4. Longer match beats shorter
+async function processStreamText(text) {
+  if (!workerBasicReady || !text) return;
+  try {
+    const msg = await workerCall('streamText', { text }, 1500);
+    const results = msg.results || [];
+    if (!results.length) return;
+
+    const ranked = rankStreamHits(results);
+
+    const confirmed = ranked.filter(r => r.confirmed);
+    const anchors   = ranked.filter(r => !r.confirmed);
+
+    if (confirmed.length) {
+      const top = confirmed.slice(0, 5);
+      broadcastDetection(top, 'stream', top[0].similarity || 0.90, 'viewer');
+    }
+    if (anchors.length) {
+      const top = anchors.slice(0, 5);
+      broadcastDetection(top, 'stream', top[0].similarity || 0.80, 'suggestions');
+    }
+  } catch (err) {
+    if (!err.message?.includes('timeout')) {
+      console.warn('[Stream] anchor search error:', err.message);
+    }
+  }
+}
+
+// Rank stream hits by contextual signals so when 3 verses share a 4-gram
+// (e.g. "lift up your heads" in Ps 24:7, Ps 24:9, Luke 21:28), the one
+// closest to the sermon's active theme + recent citations sorts first.
+function rankStreamHits(results) {
+  const hints = getContextHint();
+  const now   = Date.now();
+
+  return results
+    .map(r => {
+      let score = 0;
+
+      // Confirmed alignments beat anchor-only
+      if (r.confirmed) score += 1000;
+      // Longer matches beat shorter
+      score += (r.matched || r.depth || 0) * 10;
+      // Topic library: verse is in the sermon's active thematic frame
+      if (r.inTopicLibrary) score += 50;
+      // Recent-citation proximity — +40 for exact chapter, decaying with age
+      if (hints?.citations) {
+        for (const c of hints.citations) {
+          if (c.book !== r.book) continue;
+          const chapDelta = Math.abs((c.chapter || 0) - r.chapter);
+          if (chapDelta > 5) continue;
+          const recency = Math.max(0, 1 - c.age / (5 * 60 * 1000));
+          score += (40 - chapDelta * 6) * recency;
+        }
+      }
+
+      return { ...r, _rank: score };
+    })
+    .sort((a, b) => b._rank - a._rank);
+}
+
 // ── Reference detection ───────────────────────────────────────────────────
 // isFinal: true → normal flow (can auto-send to PP)
 // isFinal: false → from interim → route to suggestions, lighter dedup
 async function processForReferences(transcript, isFinal) {
   if (!workerBasicReady) return false;
   const refs = parseAllSpokenReferences(transcript, inBibleMode);
-  if (!refs.length) return false;
+  if (!refs.length) {
+    // No full refs, but the preacher may have named a bare book ("Exodus…")
+    // ahead of a monologue that ends with "chapter 3 verse 13". Update the
+    // reference context so resolvePartialReference can resolve it later.
+    const bareBooks = detectBookMentions(transcript, inBibleMode);
+    if (bareBooks.length) {
+      // Take the last mention — most recent intent wins.
+      const book = bareBooks[bareBooks.length - 1];
+      referenceContext.update(book, null);   // preserves previous chapter
+      inBibleMode = true;
+      clearTimeout(bibleModeClearTimer);
+      bibleModeClearTimer = setTimeout(() => { inBibleMode = false; }, 30000);
+    }
+    return false;
+  }
 
   for (const ref of refs) {
     const { book, chapter, verse, verseStart, verseEnd, ranges } = ref;
-    if (!verse && !verseStart && !ranges) continue; // need at least a verse number
 
-    inBibleMode = true;
-    clearTimeout(bibleModeClearTimer);
-    bibleModeClearTimer = setTimeout(() => { inBibleMode = false; }, 30000);
+    // Even a book-or-book+chapter-only ref is meaningful context. Record it
+    // before bailing so a split-final continuation ("from verse 10 to 12")
+    // resolves against the *current* book/chapter instead of a stale one.
+    if (book) {
+      inBibleMode = true;
+      clearTimeout(bibleModeClearTimer);
+      bibleModeClearTimer = setTimeout(() => { inBibleMode = false; }, 30000);
+      if (chapter) referenceContext.update(book, chapter);
+    }
+
+    if (!verse && !verseStart && !ranges) continue; // need at least a verse number
 
     try {
       let verses = [];
 
       if (ranges && ranges.length > 1) {
         for (const r of ranges) {
-          const msg = await workerCall('rangeLookup', { book, chapter, verseStart: r.verseStart, verseEnd: r.verseEnd }, 4000);
+          const msg = await workerCall('rangeLookup', { book, chapter, verseStart: r.verseStart, verseEnd: r.verseEnd }, 8000);
           verses.push(...(msg.results || []));
         }
       } else if (verseStart && verseEnd && verseEnd !== verseStart) {
-        const msg = await workerCall('rangeLookup', { book, chapter, verseStart, verseEnd }, 4000);
+        const msg = await workerCall('rangeLookup', { book, chapter, verseStart, verseEnd }, 8000);
         verses = msg.results || [];
       } else if (verse) {
-        const msg = await workerCall('directLookup', { book, chapter, verse }, 4000);
+        const msg = await workerCall('directLookup', { book, chapter, verse }, 8000);
         if (msg.result) verses = [msg.result];
       }
 
@@ -1300,6 +1431,8 @@ async function processForReferences(transcript, isFinal) {
           if (vKey !== lastSentRef || now - lastSentTime >= SEND_DEDUP_MS) {
             lastSentBook     = verses[0].book;
             lastSentBookTime = now;
+            lastDirectSentVerse = verses[0];
+            lastDirectSentTime  = now;
             sendToOutputs(verses[0]).catch(err => console.warn('[Server] sendToOutputs failed:', err.message));
           }
         }
@@ -1336,18 +1469,67 @@ async function processVerbatim(transcript) {
     const viewer      = results.filter(r => r.similarity >= 0.90);
     const suggestions = results.filter(r => r.similarity < 0.90);
     if (viewer.length) {
-      const vKey = `${viewer[0].book}|${viewer[0].chapter}|${viewer[0].verse}`;
-      const boosted = ensembleScore(vKey, 'verbatim', viewer[0].similarity, viewer);
+      const top        = viewer[0];
+      const vKey       = `${top.book}|${top.chapter}|${top.verse}`;
+      const corrected  = maybeCorrectMiscitation(top);
+      if (corrected) return true;   // replaced on-air, skip the normal viewer broadcast
+      const boosted = ensembleScore(vKey, 'verbatim', top.similarity, viewer);
       broadcastDetection(viewer, 'verbatim', boosted, 'viewer');
       // Feed high-confidence verbatim hits into sermon context + reading mode tracker
-      if (viewer[0].similarity >= 0.92) {
-        updateSermonContext({ book: viewer[0].book, chapter: viewer[0].chapter, verse: viewer[0].verse });
-        trackReadingModeHit(viewer[0], viewer[0].similarity);
+      if (top.similarity >= 0.92) {
+        updateSermonContext({ book: top.book, chapter: top.chapter, verse: top.verse });
+        trackReadingModeHit(top, top.similarity);
       }
     }
     if (suggestions.length) broadcastDetection(suggestions, 'verbatim', suggestions[0].similarity, 'suggestions');
     return true;
   } catch { return false; }
+}
+
+// If the preacher just cited scripture X but is now reading scripture Y
+// verbatim with high confidence, Y is almost certainly what they meant.
+// Replace on-air with Y and tag it as a correction so the operator sees what
+// happened. Returns true if a correction fired (caller should skip the normal
+// broadcast path).
+function maybeCorrectMiscitation(topMatch) {
+  if (settings.autoCorrect === false) return false;
+  if (!lastDirectSentVerse) return false;
+  const now = Date.now();
+  if (now - lastDirectSentTime > CORRECTION_WINDOW_MS) return false;
+  if (topMatch.similarity < CORRECTION_MIN_SIMILARITY) return false;
+
+  const sameVerse = topMatch.book === lastDirectSentVerse.book
+                 && topMatch.chapter === lastDirectSentVerse.chapter
+                 && topMatch.verse === lastDirectSentVerse.verse;
+  if (sameVerse) return false;   // verbatim agrees with what was cited — nothing to correct
+
+  const correctedFrom = lastDirectSentVerse.reference;
+  console.log(`[Correct] Replacing "${correctedFrom}" with verbatim hit "${topMatch.reference}" (${(topMatch.similarity*100).toFixed(0)}%)`);
+
+  // Consume the window so we don't repeatedly correct from the same stale ref.
+  lastDirectSentVerse = null;
+  lastDirectSentTime  = 0;
+
+  const correctedVerse = { ...topMatch, correctedFrom };
+  broadcast({
+    type: 'detection',
+    verses: [correctedVerse],
+    method: 'verbatim',
+    topScore: topMatch.similarity,
+    target: 'viewer',
+    corrected: true,
+    correctedFrom,
+    timestamp: now,
+  });
+
+  // Push to outputs directly — bypass broadcastDetection's same-key dedup since
+  // we specifically want to replace the mis-cited verse on ProPresenter/OBS.
+  lastSentBook     = topMatch.book;
+  lastSentBookTime = now;
+  lastDetectedRef  = `${topMatch.book}|${topMatch.chapter}|${topMatch.verse}`;
+  lastDetectedTime = now;
+  sendToOutputs(topMatch).catch(err => console.warn('[Server] sendToOutputs (correction) failed:', err.message));
+  return true;
 }
 
 // skipNewTranscriptCheck: true on interim path
@@ -1495,6 +1677,10 @@ function broadcastDetection(verses, method, topScore, target) {
     if (vKey !== lastSentRef || now - lastSentTime >= SEND_DEDUP_MS) {
       lastSentBook     = verses[0].book;
       lastSentBookTime = now;
+      if (method === 'direct') {
+        lastDirectSentVerse = verses[0];
+        lastDirectSentTime  = now;
+      }
       sendToOutputs(verses[0]).catch(err => console.warn('[Server] sendToOutputs failed:', err.message));
     }
   }

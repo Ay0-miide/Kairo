@@ -75,6 +75,46 @@ let verseSignatureWeight = null;   // Map<idx, number> — total IDF weight of e
 let verseNormText        = null;   // Map<idx, string> — pre-computed norm(kjv_text)
 let verseNormNlt         = null;   // Map<idx, string> — pre-computed norm(nlt_text)
 
+// ── Streaming 4-gram anchor trie ─────────────────────────────────────────
+// Word-level prefix trie over distinctive verse 4-grams.
+// As STT words arrive one by one, we advance a set of active nodes through
+// the trie. When depth 4 is reached, the terminal yields the matching verse(s).
+// Per-word cost: O(active states) — no polling, no similarity math.
+let anchorTrie       = null;   // root Map<word, node> where node is Map<word, node>
+let anchorTerminals  = null;   // Map<node, Array<{idx, pos}>> at depth ≥ ANCHOR_N
+let verseHealedWords = null;   // Map<idx, string[]> — pre-healed word list per verse (Layer 2)
+let activeStates     = [];     // Array<{ node, depth }> — persists across streamText calls
+let recentHitVerses  = new Map();   // Map<verseIdx, lastFireTime> — local dedupe
+
+// Layer 2 — alignment candidates track verses whose anchor fired and whose
+// subsequent words continue to match the transcript in sequence. Cheap to
+// maintain (one cursor per candidate) and drops fast on mismatch.
+let alignmentCandidates = [];  // [{ idx, cursor, matched, misses, confirmed, firedAt }]
+
+const ANCHOR_N       = 4;
+const ANCHOR_DF_MAX  = 5;      // keep a 4-gram only if it appears in ≤5 verses
+const HIT_DEDUP_MS   = 12000;  // don't re-fire the same verse within 12s in-worker
+
+// Layer 2 tuning
+const ALIGN_CONFIRM_AT   = 6;     // words aligned to escalate from anchor → confirmed
+const ALIGN_MISS_BUDGET  = 2;     // tolerate this many word skips before dropping
+const ALIGN_AGE_MS       = 20000; // drop candidates older than 20s without confirmation
+
+// STT artifact + KJV-modernization healing for the streaming path.
+// Applied to both verse n-grams at build time and transcript words at stream
+// time, so archaic ↔ modern variants collide to the same canonical token.
+// Over-collided 4-grams (e.g. "i say to you" after unto→to) exceed the DF
+// filter and self-prune — so the dict can be generous without flooding.
+const WORD_HEAL = {
+  oh: 'o',
+  unto: 'to',
+  saith: 'says',
+  said: 'says',
+};
+function healWord(w) {
+  return WORD_HEAL[w] || w;
+}
+
 // Max distinctive words stored per verse fingerprint.
 // 10 gives better coverage for longer verses without inflating noise for short ones
 // (short verses simply have fewer qualifying words — the cap is a ceiling, not a target).
@@ -188,8 +228,171 @@ async function init() {
   }
   console.log(`[DetectionWorker] Verse fingerprints built (${SIGNATURE_SIZE} words/verse max).`);
 
+  buildAnchorTrie();
+
   parentPort.postMessage({ type: 'ready' });
   console.log('[DetectionWorker] Ready — all four detection layers active.');
+}
+
+// ── Anchor trie build ─────────────────────────────────────────────────────
+// Pass 1: extract every 4-gram from every verse, count document frequency.
+// Pass 2: insert into trie only those with DF ≤ ANCHOR_DF_MAX. Common phrases
+// ("and it came to pass") are skipped — they'd fire on every sentence.
+// Rare phrases ("lift up your heads", "meditate day and night") become anchors
+// that fire the moment the 4th word lands.
+function buildAnchorTrie() {
+  const t0 = Date.now();
+  verseHealedWords = new Map();
+  const dfCounts   = new Map();   // Map<"w1 w2 w3 w4", Set<verseIdx>>
+
+  // Pass 1 — cache healed word list per verse + count 4-gram DF
+  for (let i = 0; i < verseMetadata.length; i++) {
+    const words = (verseNormText.get(i) || '')
+      .split(' ')
+      .filter(Boolean)
+      .map(healWord);
+    verseHealedWords.set(i, words);
+    for (let k = 0; k + ANCHOR_N <= words.length; k++) {
+      const key = words.slice(k, k + ANCHOR_N).join(' ');
+      let set = dfCounts.get(key);
+      if (!set) { set = new Set(); dfCounts.set(key, set); }
+      set.add(i);
+    }
+  }
+
+  // Pass 2 — insert each distinctive 4-gram into trie, tagging with position.
+  // Terminals store df (document frequency) so anchor fires can be scored by
+  // distinctiveness. A df=1 4-gram is unique to one verse; df=5 is shared.
+  anchorTrie      = new Map();
+  anchorTerminals = new Map();
+  let kept = 0, skipped = 0;
+
+  for (let i = 0; i < verseMetadata.length; i++) {
+    const words = verseHealedWords.get(i) || [];
+    for (let k = 0; k + ANCHOR_N <= words.length; k++) {
+      const gram = words.slice(k, k + ANCHOR_N);
+      const key  = gram.join(' ');
+      const df   = dfCounts.get(key).size;
+      if (df > ANCHOR_DF_MAX) { skipped++; continue; }
+      let node = anchorTrie;
+      for (let d = 0; d < ANCHOR_N; d++) {
+        let child = node.get(gram[d]);
+        if (!child) { child = new Map(); node.set(gram[d], child); }
+        node = child;
+      }
+      let terminal = anchorTerminals.get(node);
+      if (!terminal) { terminal = { df, entries: [] }; anchorTerminals.set(node, terminal); }
+      terminal.entries.push({ idx: i, pos: k });
+      kept++;
+    }
+  }
+
+  console.log(`[Anchor] Trie built in ${Date.now() - t0}ms — ${kept} distinctive 4-grams kept, ${skipped} common skipped.`);
+}
+
+// ── Streaming advance ────────────────────────────────────────────────────
+// Called once per incoming word. Advances every active state one step and
+// opens a new state from the root. Returns any verse indexes that fired
+// (reached depth ANCHOR_N at a terminal node) at this tick, with local
+// dedupe so the same verse can't re-fire within HIT_DEDUP_MS.
+function streamWord(raw) {
+  if (!anchorTrie) return { anchors: [], confirmed: [] };
+  const word = healWord(
+    String(raw || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+  );
+  if (!word) return { anchors: [], confirmed: [] };
+
+  const now       = Date.now();
+  const anchors   = [];   // new 4-gram anchor fires from this word
+  const confirmed = [];   // candidates that hit ALIGN_CONFIRM_AT alignment this word
+
+  // ── Layer 2: advance alignment candidates ───────────────────────────────
+  // For each open candidate, does the verse's next word equal the current
+  // transcript word? If yes, cursor++. If no, spend a miss (skip one verse
+  // word). When misses run out → drop. When `matched` crosses ALIGN_CONFIRM_AT
+  // for the first time → emit a confirmed fire.
+  const kept = [];
+  for (const cand of alignmentCandidates) {
+    if (now - cand.firedAt > ALIGN_AGE_MS) continue;
+
+    const words = verseHealedWords.get(cand.idx) || [];
+    if (cand.cursor >= words.length) continue;   // ran off the end — retire quietly
+
+    let matchedThisTick = false;
+    if (words[cand.cursor] === word) {
+      cand.cursor++;
+      cand.matched++;
+      matchedThisTick = true;
+    } else if (cand.misses > 0 && cand.cursor + 1 < words.length && words[cand.cursor + 1] === word) {
+      // Skip one verse word (STT insertion or paraphrase)
+      cand.cursor   += 2;
+      cand.matched++;
+      cand.misses--;
+      matchedThisTick = true;
+    } else if (cand.misses > 0) {
+      // Speaker said a word that doesn't align here at all — burn a miss,
+      // but don't advance the cursor. The candidate waits for its next word.
+      cand.misses--;
+    } else {
+      continue;   // dead
+    }
+
+    if (matchedThisTick && !cand.confirmed && cand.matched >= ALIGN_CONFIRM_AT) {
+      cand.confirmed = true;
+      confirmed.push({ verseIdx: cand.idx, matched: cand.matched });
+    }
+    kept.push(cand);
+  }
+  alignmentCandidates = kept;
+
+  // ── Layer 1: advance trie, open new anchor fires ────────────────────────
+  const next = [];
+  const tryAdvance = (node, depth) => {
+    const child = node.get(word);
+    if (!child) return;
+    const newDepth = depth + 1;
+    if (newDepth >= ANCHOR_N) {
+      const terminal = anchorTerminals.get(child);
+      if (terminal) {
+        for (const { idx, pos } of terminal.entries) {
+          const last = recentHitVerses.get(idx) || 0;
+          if (now - last < HIT_DEDUP_MS) continue;
+          recentHitVerses.set(idx, now);
+          anchors.push({ verseIdx: idx, depth: newDepth, df: terminal.df });
+
+          // Open an alignment candidate so subsequent words can promote this
+          // anchor to confirmed. Starts already at ANCHOR_N words matched.
+          alignmentCandidates.push({
+            idx,
+            cursor:    pos + ANCHOR_N,
+            matched:   ANCHOR_N,
+            misses:    ALIGN_MISS_BUDGET,
+            confirmed: false,
+            firedAt:   now,
+          });
+        }
+      }
+    }
+    if (newDepth < ANCHOR_N) next.push({ node: child, depth: newDepth });
+  };
+
+  for (const s of activeStates) tryAdvance(s.node, s.depth);
+  tryAdvance(anchorTrie, 0);
+
+  activeStates = next.length > 50 ? next.slice(-50) : next;
+
+  // Bound alignment candidate set too — keep the most recent
+  if (alignmentCandidates.length > 40) {
+    alignmentCandidates = alignmentCandidates.slice(-40);
+  }
+
+  return { anchors, confirmed };
+}
+
+function streamReset() {
+  activeStates         = [];
+  alignmentCandidates  = [];
+  recentHitVerses.clear();
 }
 
 // ── Direct lookup ─────────────────────────────────────────────────────────
@@ -685,6 +888,75 @@ parentPort.on('message', async (msg) => {
       case 'getIdfScores': {
         const words = (msg.words || []).map(w => [w, idfMap.get(w) || 0]);
         parentPort.postMessage({ type: 'idfScores', id: msg.id, words });
+        break;
+      }
+      case 'streamText': {
+        // Word-by-word streaming into the anchor trie + alignment candidates.
+        // No buffering, no throttle — every word is processed the instant it arrives.
+        const words = String(msg.text || '').toLowerCase().split(/\s+/).filter(Boolean);
+        const anchorsByVerse   = new Map();   // idx → { depth, df }
+        const confirmedByVerse = new Map();   // idx → matched
+
+        for (const w of words) {
+          const { anchors, confirmed } = streamWord(w);
+          for (const a of anchors) {
+            const prev = anchorsByVerse.get(a.verseIdx);
+            // Keep the most distinctive (lowest df) anchor seen for this verse
+            if (!prev || a.df < prev.df || (a.df === prev.df && a.depth > prev.depth)) {
+              anchorsByVerse.set(a.verseIdx, { depth: a.depth, df: a.df });
+            }
+          }
+          for (const c of confirmed) {
+            const prev = confirmedByVerse.get(c.verseIdx) || 0;
+            if (c.matched > prev) confirmedByVerse.set(c.verseIdx, c.matched);
+          }
+        }
+
+        // Score formula:
+        //   Confirmed: 0.90 at 6 words aligned → 0.97 at 13+
+        //   Anchor:    df=1 → 0.85 (unique), df=2 → 0.80, df=3 → 0.76, df=4 → 0.72, df=5 → 0.68.
+        //   With SUGGESTION_MIN_SCORE=0.75 on the server, df=4+ anchors self-drop unless a
+        //   higher-layer signal boosts them (topic library, recent citation proximity).
+        const anchorSimilarity = df => {
+          if (df <= 1) return 0.85;
+          if (df === 2) return 0.80;
+          if (df === 3) return 0.76;
+          if (df === 4) return 0.72;
+          return 0.68;
+        };
+
+        const results = [];
+        const seen = new Set();
+        for (const [idx, matched] of confirmedByVerse) {
+          const similarity = Math.min(0.97, 0.90 + (matched - ALIGN_CONFIRM_AT) * 0.01);
+          results.push({
+            ...formatVerse(verseMetadata[idx], similarity, 'stream'),
+            depth: matched,
+            matched,
+            df: 0,
+            confirmed: true,
+            inTopicLibrary: !!(topicLibrary && topicLibrary.has(idx)),
+          });
+          seen.add(idx);
+        }
+        for (const [idx, { depth, df }] of anchorsByVerse) {
+          if (seen.has(idx)) continue;
+          results.push({
+            ...formatVerse(verseMetadata[idx], anchorSimilarity(df), 'stream'),
+            depth,
+            matched: depth,
+            df,
+            confirmed: false,
+            inTopicLibrary: !!(topicLibrary && topicLibrary.has(idx)),
+          });
+        }
+
+        parentPort.postMessage({ type: 'streamResult', id: msg.id, results });
+        break;
+      }
+      case 'streamReset': {
+        streamReset();
+        parentPort.postMessage({ type: 'streamResetAck', id: msg.id });
         break;
       }
       case 'ping':

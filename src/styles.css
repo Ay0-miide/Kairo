@@ -1884,12 +1884,42 @@ select {
   gap: 5px;
 }
 
-/* Scrollable full-height variant */
+/* Scrollable full-height variant — flex parent gives it a bounded height,
+   overflow-y from .cs-live-queue-body does the scrolling. The 1 1 0 shorthand
+   (grow, shrink, 0 basis) is deliberate: a non-zero basis lets tall children
+   push the container past its parent and kill scrolling. */
 .cs-live-queue-scroll {
-  flex: 1;
+  flex: 1 1 0;
   min-height: 0;
-  max-height: none;
+  max-height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
+.cs-live-queue-scroll::-webkit-scrollbar       { width: 8px; }
+.cs-live-queue-scroll::-webkit-scrollbar-track { background: transparent; }
+.cs-live-queue-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 4px; }
+.cs-live-queue-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.18); }
+
+/* Correction chip — shown on a live-queue card when auto-correct replaced a
+   previous mis-cited reference. Sits next to the ref line, small + muted so
+   it's noticeable but doesn't steal focus from the verse text. */
+.corrected-chip {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-family: var(--font-head);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--amber, #e8a64a);
+  background: rgba(232,166,74,0.12);
+  border: 1px solid rgba(232,166,74,0.28);
+  white-space: nowrap;
+}
+.locked-verse-card.corrected { border-left-color: var(--amber, #e8a64a); }
 
 .cs-queue-empty {
   font-size: 11px;
