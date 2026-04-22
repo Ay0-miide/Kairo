@@ -100,146 +100,124 @@ const ALIGN_CONFIRM_AT   = 6;     // words aligned to escalate from anchor → c
 const ALIGN_MISS_BUDGET  = 2;     // tolerate this many word skips before dropping
 const ALIGN_AGE_MS       = 20000; // drop candidates older than 20s without confirmation
 
-// STT artifact + KJV-modernization healing for the streaming path.
-// Applied to both verse n-grams at build time and transcript words at stream
-// time, so archaic ↔ modern variants collide to the same canonical token.
-// Over-collided 4-grams (e.g. "i say to you" after unto→to) exceed the DF
-// filter and self-prune — so the dict can be generous without flooding.
+// ── Algorithmic KJV stemmer ───────────────────────────────────────────────
+// Applied to BOTH verse n-grams at build time AND transcript words at stream
+// time, so morphological variants of any word in the Bible collapse to the
+// same canonical token. Symmetric application is what matters — the stem
+// doesn't need to be a real English word, only consistent between the trie
+// and the transcript.
 //
-// Stemming entries collapse inflected forms so a preacher's fragmented
-// paraphrase ("gates are lifted up", "lifted up your everlasting door")
-// still anchors the original verse ("lift up ye gates / doors"). Without
-// this a 4-gram of "lifted up your everlasting" can't hit the trie entry
-// "lift up ye everlasting" because the words differ morphologically.
-const WORD_HEAL = {
-  // STT artifacts + archaic particles
+// The algorithm is a scoped Porter-style suffix stripper tuned for the
+// English of the KJV and modern spoken paraphrases. Rules in priority order:
+//
+//   1. STT artifact heals  (oh→o, unto→to)        — pre-stem normalization
+//   2. Irregular verbs     (hath/saith/came/…)    — genuine English irregulars
+//      that no algorithmic stemmer can handle.
+//   3. Suffix stripping    (-ies, -ied, -eth, -est, -ing, -ed, -es, -s)
+//   4. Trailing -e collapse (come→com, gate→gat)  — pairs with -ing/-ed/-s
+//      strips so come/coming/cometh/comes/came all meet at "com".
+//   5. Double-consonant collapse (runn→run, putt→put)
+//
+// Stops-words and very short words (≤ 2 chars) are left alone. The DF ≤ 5
+// filter on the 4-gram trie naturally self-prunes any combination that
+// becomes too common after stemming, so aggressive stripping is safe.
+
+// STT artifacts the speech-to-text layer produces. Applied before stemming.
+const STT_HEAL = {
   oh: 'o',
   unto: 'to',
-  saith: 'say',
-  said: 'say',
-  says: 'say',
-
-  // Plural → singular (common biblical nouns)
-  heads: 'head',
-  gates: 'gate',
-  doors: 'door',
-  eyes: 'eye',
-  hands: 'hand',
-  feet: 'foot',
-  heavens: 'heaven',
-  kings: 'king',
-  ways: 'way',
-  days: 'day',
-  nights: 'night',
-  lords: 'lord',
-  works: 'work',
-  words: 'word',
-  nations: 'nation',
-  peoples: 'people',
-  sons: 'son',
-  daughters: 'daughter',
-  fathers: 'father',
-  mothers: 'mother',
-  brothers: 'brother',
-  brethren: 'brother',
-  sisters: 'sister',
-  mountains: 'mountain',
-  rivers: 'river',
-  seas: 'sea',
-  stars: 'star',
-  angels: 'angel',
-  spirits: 'spirit',
-  hearts: 'heart',
-  souls: 'soul',
-  bodies: 'body',
-  sheep: 'sheep',
-  lambs: 'lamb',
-  wolves: 'wolf',
-  prophets: 'prophet',
-  priests: 'priest',
-  disciples: 'disciple',
-  apostles: 'apostle',
-  servants: 'servant',
-  masters: 'master',
-
-  // Verb inflections → base form
-  lifted: 'lift',
-  lifting: 'lift',
-  liftest: 'lift',
-  lifteth: 'lift',
-  came: 'come',
-  cometh: 'come',
-  coming: 'come',
-  comes: 'come',
-  went: 'go',
-  going: 'go',
-  goeth: 'go',
-  gone: 'go',
-  goes: 'go',
-  walked: 'walk',
-  walketh: 'walk',
-  walking: 'walk',
-  walks: 'walk',
-  maketh: 'make',
-  makes: 'make',
-  making: 'make',
-  made: 'make',
-  doeth: 'do',
-  does: 'do',
-  doing: 'do',
-  done: 'do',
-  did: 'do',
-  hath: 'have',
-  has: 'have',
-  had: 'have',
-  having: 'have',
-  taketh: 'take',
-  takes: 'take',
-  taking: 'take',
-  took: 'take',
-  taken: 'take',
-  giveth: 'give',
-  gives: 'give',
-  giving: 'give',
-  gave: 'give',
-  given: 'give',
-  seeth: 'see',
-  sees: 'see',
-  saw: 'see',
-  seen: 'see',
-  seeing: 'see',
-  hearing: 'hear',
-  heareth: 'hear',
-  heard: 'hear',
-  hears: 'hear',
-  knew: 'know',
-  knoweth: 'know',
-  knows: 'know',
-  known: 'know',
-  knowing: 'know',
-  believed: 'believe',
-  believeth: 'believe',
-  believes: 'believe',
-  believing: 'believe',
-  loved: 'love',
-  loveth: 'love',
-  loves: 'love',
-  loving: 'love',
-  blessed: 'bless',
-  blesseth: 'bless',
-  blesses: 'bless',
-  blessing: 'bless',
-  cried: 'cry',
-  crieth: 'cry',
-  cries: 'cry',
-  crying: 'cry',
-  called: 'call',
-  calleth: 'call',
-  calls: 'call',
-  calling: 'call',
 };
+
+// English irregulars — every entry here is a verb whose forms differ enough
+// from the base that pure suffix stripping can't collapse them. Each entry
+// maps directly to a stem, so the stemmer short-circuits before suffix
+// rules. Kept intentionally small; this is the irreducible core.
+const IRREGULAR = {
+  // be
+  am: 'be', are: 'be', is: 'be', was: 'be', were: 'be',
+  been: 'be', being: 'be', be: 'be', art: 'be',
+  // have
+  hath: 'hav', has: 'hav', have: 'hav', had: 'hav', having: 'hav', hast: 'hav',
+  // say (KJV saith + modern said)
+  saith: 'sai', said: 'sai', says: 'sai', saying: 'sai', say: 'sai',
+  // do
+  doth: 'do', doeth: 'do', does: 'do', did: 'do', done: 'do', doing: 'do',
+  // go (went is irregular; going handled by -ing strip)
+  went: 'go', gone: 'go',
+  // come (came is irregular)
+  came: 'com',
+  // see (saw/seen irregular)
+  saw: 'se', seen: 'se',
+  // know (knew/known irregular)
+  knew: 'kno', known: 'kno',
+  // take (took/taken irregular)
+  took: 'tak', taken: 'tak',
+  // give (gave/given irregular)
+  gave: 'giv', given: 'giv',
+  // hear (heard irregular)
+  heard: 'hear',
+  // -ought past-tense cluster (brought/bought/taught/sought/thought/fought/caught/wrought)
+  brought: 'bring', bought: 'buy', taught: 'teach', sought: 'seek',
+  thought: 'think', fought: 'fight', caught: 'catch', wrought: 'work',
+  // other common KJV irregulars
+  ate: 'eat', eaten: 'eat',
+  ran: 'run', rose: 'ris', risen: 'ris',
+  fell: 'fall', fallen: 'fall',
+  spoke: 'speak', spoken: 'speak', spake: 'speak',
+  broke: 'break', broken: 'break', brake: 'break',
+  stood: 'stand', sat: 'sit',
+  wrote: 'writ', written: 'writ',
+  chose: 'choos', chosen: 'choos',
+  // KJV archaic contractions — archaic "brethren" is the plural of brother,
+  // truly suppletive, can't be stripped.
+  brethren: 'brother',
+  // men/women suppletive plurals
+  men: 'man', women: 'woman', children: 'child',
+};
+
+// Algorithmic suffix stripper. Runs after STT heal + irregulars.
+function suffixStrip(s) {
+  if (s.length <= 3) return s;
+  // -ies / -ied  (babies→baby, cried→cry)
+  if (s.length > 4 && s.endsWith('ies')) return s.slice(0, -3) + 'y';
+  if (s.length > 4 && s.endsWith('ied')) return s.slice(0, -3) + 'y';
+  // -eth / -est  (cometh/liftest)
+  if (s.length > 4 && s.endsWith('eth')) return s.slice(0, -3);
+  if (s.length > 4 && s.endsWith('est')) return s.slice(0, -3);
+  // -ing  (lifting/coming)
+  if (s.length > 5 && s.endsWith('ing')) return s.slice(0, -3);
+  // -ed   (lifted/loved)
+  if (s.length > 4 && s.endsWith('ed'))  return s.slice(0, -2);
+  // -es   (gates/wishes) — but not -ses, -xes, -zes, -ches, -shes that drop only -s
+  if (s.length > 4 && s.endsWith('es')) {
+    if (s.endsWith('ses') || s.endsWith('xes') || s.endsWith('zes') ||
+        s.endsWith('ches') || s.endsWith('shes')) return s.slice(0, -2);
+    return s.slice(0, -2);
+  }
+  // -s    (plural / 3rd-person) — preserve -ss, -us, -is (class, Jesus, this)
+  if (s.length > 3 && s.endsWith('s') &&
+      !s.endsWith('ss') && !s.endsWith('us') && !s.endsWith('is')) return s.slice(0, -1);
+  return s;
+}
+
+// Final collapse pass: trailing -e drop + double-consonant collapse.
+// Runs after every other rule so come/coming/cometh/comes/came all meet
+// at the same "com" stem.
+function collapseEnd(s) {
+  if (s.length > 3 && s.endsWith('e')) s = s.slice(0, -1);
+  if (s.length > 3) {
+    const a = s[s.length - 1], b = s[s.length - 2];
+    if (a === b && !'aeiou'.includes(a)) s = s.slice(0, -1);
+  }
+  return s;
+}
+
 function healWord(w) {
-  return WORD_HEAL[w] || w;
+  if (!w) return w;
+  if (STT_HEAL[w])  return IRREGULAR[STT_HEAL[w]] || collapseEnd(suffixStrip(STT_HEAL[w]));
+  if (IRREGULAR[w]) return IRREGULAR[w];
+  if (w.length <= 2) return w;
+  return collapseEnd(suffixStrip(w));
 }
 
 // Max distinctive words stored per verse fingerprint.
