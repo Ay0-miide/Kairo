@@ -1,6 +1,6 @@
 [package]
 name = "kairo"
-version = "2.0.0"
+version = "2.1.0"
 description = "KAIRO — AI Scripture Assistant"
 authors = ["KAIRO"]
 edition = "2021"

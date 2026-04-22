@@ -1801,7 +1801,7 @@ dependencies = [
 
 [[package]]
 name = "kairo"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "reqwest 0.12.28",
  "serde",
