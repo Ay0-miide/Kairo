@@ -97,6 +97,16 @@ jobs:
           if [[ "$TRIPLE" == "universal-apple-darwin" ]]; then
             fetch_node darwin arm64 aarch64-apple-darwin
             fetch_node darwin x64   x86_64-apple-darwin
+            # Tauri's sidecar loader for universal-apple-darwin expects ONE
+            # file named node-universal-apple-darwin. Fuse the two arch
+            # binaries into a fat Mach-O with lipo.
+            lipo -create \
+              "$DEST/node-aarch64-apple-darwin" \
+              "$DEST/node-x86_64-apple-darwin" \
+              -output "$DEST/node-universal-apple-darwin"
+            chmod +x "$DEST/node-universal-apple-darwin"
+            lipo -info "$DEST/node-universal-apple-darwin"
+            echo "✓ Bundled universal $DEST/node-universal-apple-darwin"
           elif [[ "$TRIPLE" == *"darwin"* ]]; then
             ARCH=$(echo "$TRIPLE" | grep -o 'aarch64\|x86_64')
             NODEARCH=$([ "$ARCH" = "aarch64" ] && echo "arm64" || echo "x64")
