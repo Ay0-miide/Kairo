@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>KAIRO</title>
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: default;
+  }
+
+  body {
+    background: linear-gradient(180deg, #131313 0%, #0a0a0a 100%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 22px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    color: #fff;
+    -webkit-app-region: drag;
+  }
+
+  .wordmark {
+    font-size: 44px;
+    font-weight: 800;
+    letter-spacing: 0.16em;
+    line-height: 1;
+  }
+  .wordmark .accent { color: #e8404a; }
+
+  .tagline {
+    font-size: 10px;
+    letter-spacing: 0.36em;
+    text-transform: uppercase;
+    color: #888;
+    margin-top: -10px;
+  }
+
+  .dots {
+    display: flex;
+    gap: 8px;
+    margin-top: 6px;
+  }
+  .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #e8404a;
+    animation: pulse 1.3s ease-in-out infinite;
+    opacity: 0.3;
+  }
+  .dot:nth-child(2) { animation-delay: 0.18s; }
+  .dot:nth-child(3) { animation-delay: 0.36s; }
+
+  @keyframes pulse {
+    0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+    40%           { opacity: 1;   transform: scale(1.0); }
+  }
+
+  .status {
+    font-size: 9.5px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: #555;
+    margin-top: 4px;
+    font-weight: 500;
+  }
+</style>
+</head>
+<body>
+  <div class="wordmark">KAI<span class="accent">RO</span></div>
+  <div class="tagline">Live Scripture Detection</div>
+  <div class="dots">
+    <div class="dot"></div>
+    <div class="dot"></div>
+    <div class="dot"></div>
+  </div>
+  <div class="status">Starting&hellip;</div>
+</body>
+</html>

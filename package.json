@@ -1,6 +1,6 @@
 {
   "name": "kairo",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "description": "KAIRO v2 — Tauri + Logos-powered scripture detection",
   "scripts": {
     "server": "node server/server.js",

@@ -211,28 +211,32 @@ jobs:
 
             **AI-powered live Bible verse detection for church services.**
 
-            ### What's new
-            - **Offline speech engine** — runs entirely on-device. No internet, no API key, no monthly cost. Powered by Vosk + the same detection pipeline as the cloud path.
-            - **Cleaner UI** — pill-shaped Start/Stop button (outlined when idle, filled while listening), unified rounded toolbar, teal accent that complements the red brand.
-            - **Slimmer install** — stripped 414MB of unused embedding-model deps from the server.
+            ### Fixes in this release
+            - **macOS white screen on launch** — bundled Node sidecar now ships with the JIT entitlements V8 needs. The white screen on v2.2.0 was caused by Tauri's ad-hoc re-signing stripping those entitlements; now they're explicitly applied.
+            - **Branded loading splash** — instant feedback while the server boots. No more blank window during startup.
+            - **Microphone usage prompt** — proper macOS permission dialog with a clear description.
+
+            ### Carried over from v2.2.0
+            - **Offline speech engine** — runs entirely on-device. No internet, no API key, no monthly cost. Powered by Vosk.
+            - **Pill Start/Stop button** — outlined when idle, filled while listening. Unified rounded toolbar.
+            - **414MB lighter** — stripped unused embedding-stack deps.
 
             ### Pick your engine in Settings → Audio
             - **Deepgram** — higher accuracy, requires a free API key from [deepgram.com](https://deepgram.com) (12,000 min/month free).
             - **Offline** — no internet, no key, runs locally. Lower accuracy but always-on.
 
-            ### What you need
-            - Audio source: line-in from a mixing board or a device mic
-            - macOS (Apple Silicon or Intel), Windows, or Linux
+            ### Install
+
+            - **macOS**: Download `.dmg`, drag KAIRO to Applications.
+
+              **First launch only**: macOS will block the app because we don't yet have an Apple Developer signing certificate. Right-click KAIRO in Applications → **Open** → click **Open** in the dialog. After that, double-click works normally.
+
+            - **Windows**: Download `.msi` installer, run it. SmartScreen may show "unrecognized publisher" — click **More info** → **Run anyway**.
+
+            - **Linux**: Download `.deb` (Debian/Ubuntu) or `.rpm` (Fedora/RHEL).
 
             ### Optional integrations
-            - ProPresenter (REST API)
-            - OBS (WebSocket)
-            - Syphon / External Display (macOS)
-
-            ### Install
-            - **macOS**: Download `.dmg`, open, drag to Applications. (Unsigned build — first launch: right-click → Open, or run `xattr -cr /Applications/KAIRO.app` once.)
-            - **Windows**: Download `.msi` installer, run it
-            - **Linux**: Download `.deb` (Debian/Ubuntu) or `.rpm` (Fedora/RHEL)
+            ProPresenter REST API · OBS WebSocket · Syphon / external display (macOS)
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}

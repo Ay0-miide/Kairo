@@ -232,6 +232,18 @@
     .step h3 { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
     .step p  { font-size: 13px; color: #999; }
     .step a  { color: #aaa; }
+    .note-box {
+      margin-top: 12px;
+      padding: 10px 14px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-left: 3px solid #4db6ac;
+      border-radius: 6px;
+      font-size: 12.5px;
+      color: #bbb;
+      line-height: 1.55;
+    }
+    .note-box strong { color: #eee; }
 
     /* ── Requirements ── */
     .reqs {
@@ -448,6 +460,12 @@
         <div>
           <h3>Download &amp; install</h3>
           <p>Download the installer for your platform above, open it, and drag KAIRO to your Applications folder (macOS) or run the installer (Windows).</p>
+          <div class="note-box">
+            <strong>macOS first launch:</strong> macOS will block KAIRO the first time because we don't yet have an Apple Developer signing certificate. <strong>Right-click KAIRO in Applications</strong> &rarr; <strong>Open</strong> &rarr; click <strong>Open</strong> in the dialog. After that, double-click works normally.
+          </div>
+          <div class="note-box">
+            <strong>Windows first launch:</strong> Windows SmartScreen may show "unrecognized publisher". Click <strong>More info</strong> &rarr; <strong>Run anyway</strong>.
+          </div>
         </div>
       </div>
       <div class="step">

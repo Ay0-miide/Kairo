@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Shown by macOS the first time KAIRO requests the microphone.
+         Without this key, the OS suppresses the prompt and the app
+         silently has no audio access. -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>KAIRO listens to your sermon audio to detect Bible verses in real time.</string>
+
+    <!-- Allow loading localhost over HTTP (the bundled Node server). -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsLocalNetworking</key>
+        <true/>
+    </dict>
+</dict>
+</plist>

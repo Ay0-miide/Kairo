@@ -5,10 +5,22 @@
 
 use std::process::{Child, Command};
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Manager, RunEvent};
+use base64::Engine;
+use tauri::{AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
 #[cfg(not(debug_assertions))]
 use tauri::Emitter;
 use tauri_plugin_updater::UpdaterExt;
+
+// Embedded splash HTML — baked into the binary so it can render INSTANTLY
+// at launch, before the Node sidecar (and therefore Express) is up.
+const SPLASH_HTML: &str = include_str!("splash.html");
+
+/// Build a `data:` URL for the splash page so the splash window can load it
+/// without any filesystem or HTTP dependency.
+fn splash_data_url() -> String {
+    let encoded = base64::engine::general_purpose::STANDARD.encode(SPLASH_HTML);
+    format!("data:text/html;charset=utf-8;base64,{}", encoded)
+}
 
 struct ServerProcess(Arc<Mutex<Option<Child>>>);
 
@@ -174,6 +186,30 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
 
+            // ── Splash window ─────────────────────────────────────────────
+            // Show a branded loading screen IMMEDIATELY so the user gets
+            // feedback while the Node sidecar boots (~2-4s cold start).
+            // The HTML is baked into the binary as a data: URL — no
+            // filesystem, no network, renders before anything else does.
+            let splash_url = splash_data_url();
+            let splash_built = WebviewWindowBuilder::new(
+                app,
+                "splash",
+                WebviewUrl::External(splash_url.parse().expect("splash data url parses")),
+            )
+            .title("KAIRO")
+            .inner_size(440.0, 300.0)
+            .center()
+            .decorations(false)
+            .always_on_top(true)
+            .resizable(false)
+            .skip_taskbar(false)
+            .visible(true)
+            .build();
+            if let Err(e) = &splash_built {
+                eprintln!("[KAIRO] Failed to create splash window: {e}");
+            }
+
             // Start the bundled Node.js server.
             // In dev, the server is started by `beforeDevCommand` in tauri.conf.json
             // so we don't spawn a second one (which would collide on port 7777).
@@ -188,8 +224,8 @@ pub fn run() {
                 let _ = &handle; // keep handle alive for use below
             }
 
-            // Poll /health until the server responds, then show the window.
-            // Max wait: 15 seconds (30 × 500ms).
+            // Poll /health until the server responds, then close splash and
+            // show the main window. Max wait: 15 seconds (30 × 500ms).
             let handle2 = handle.clone();
             std::thread::spawn(move || {
                 let client = reqwest::blocking::Client::builder()
@@ -197,17 +233,28 @@ pub fn run() {
                     .build()
                     .unwrap_or_default();
 
+                let mut server_ready = false;
                 for attempt in 0..30 {
                     std::thread::sleep(std::time::Duration::from_millis(500));
                     if client.get("http://localhost:7777/health").send().is_ok() {
                         println!("[KAIRO] Server ready after ~{}ms", attempt * 500);
+                        server_ready = true;
                         break;
                     }
                 }
+                if !server_ready {
+                    eprintln!("[KAIRO] Server failed to come up within 15s — showing main window anyway so the user isn't stuck on the splash.");
+                }
 
+                // Show the main window FIRST so the focus transfer from splash
+                // is seamless, THEN close the splash so there's no flash of
+                // empty desktop between the two.
                 if let Some(win) = handle2.get_webview_window("main") {
                     let _ = win.show();
                     let _ = win.set_focus();
+                }
+                if let Some(splash) = handle2.get_webview_window("splash") {
+                    let _ = splash.close();
                 }
 
                 // Check for updates in the background after the window is visible.
