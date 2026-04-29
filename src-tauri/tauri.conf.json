@@ -1,6 +1,6 @@
 {
   "productName": "KAIRO",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "identifier": "com.kairo.scripture",
   "build": {
     "beforeDevCommand": "npm run server",
@@ -50,6 +50,7 @@
     ],
     "resources": {
       "../server": "server",
+      "../src": "src",
       "../databases/logos/map.json": "databases/logos/map.json",
       "../databases/logos/kjv.json": "databases/logos/kjv.json"
     },

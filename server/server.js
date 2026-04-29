@@ -250,19 +250,22 @@ wss.on('connection', (ws) => {
   // Send current worker status on connect
   ws.send(JSON.stringify({ type: 'worker-status', ready: workerBasicReady }));
 
-  // Forward binary audio frames to Deepgram + maintain ring buffer for REST fallback
+  // Forward binary audio frames to whichever engine is active.
+  // - Deepgram: streamed straight to the WS connection (Deepgram does endpointing)
+  // - Vosk:     fed to the local recognizer; result() / partialResult() drive detection
+  // Either way we keep a short audio ring buffer for the REST fallback path.
   ws.on('message', (data, isBinary) => {
-    if (isBinary && deepgramConnection) {
-      try { deepgramConnection.send(data); } catch {}
+    if (!isBinary) return;
+    const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data);
+    if (deepgramConnection) {
+      try { deepgramConnection.send(chunk); } catch {}
+    } else if (voskActive) {
+      feedVoskAudio(chunk);
     }
-    if (isBinary) {
-      const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data);
-      audioRingBuffer.push({ data: chunk, time: Date.now() });
-      audioRingBytes += chunk.length;
-      // Evict oldest chunks when over the cap
-      while (audioRingBytes > AUDIO_RING_MAX_BYTES && audioRingBuffer.length) {
-        audioRingBytes -= audioRingBuffer.shift().data.length;
-      }
+    audioRingBuffer.push({ data: chunk, time: Date.now() });
+    audioRingBytes += chunk.length;
+    while (audioRingBytes > AUDIO_RING_MAX_BYTES && audioRingBuffer.length) {
+      audioRingBytes -= audioRingBuffer.shift().data.length;
     }
   });
 });
@@ -282,6 +285,19 @@ let deepgramLastConfig    = {};      // last config passed to startDeepgram — 
 let deepgramKeepAliveTimer  = null;  // 8-second ping to prevent silent connection drop
 let deepgramSilenceWatchdog = null;  // 30-second watchdog — reconnects if no transcript received
 let deepgramLastTranscriptAt = 0;    // timestamp of last received transcript segment
+
+// ── Vosk (offline STT) state ──────────────────────────────────────────────
+// Loaded lazily on first use so we don't pay the ~80MB RAM cost when the
+// user is on Deepgram. Model is reused across sessions; recognizer is per-session.
+let voskLib          = null;        // require('vosk-koffi'), loaded once
+let voskModel        = null;        // Vosk.Model instance — heavy, kept alive
+let voskRecognizer   = null;        // per-listening-session recognizer
+let voskActive       = false;       // true when Vosk path is the active engine
+let voskLastPartial  = '';          // last partial we broadcast — dedupe noise
+let voskPartialFlushTimer = null;   // throttles partials so we don't flood detection
+const VOSK_SAMPLE_RATE = 16000;
+const VOSK_PARTIAL_FLUSH_MS = 220;  // emit partials at most ~4×/s
+const VOSK_MODEL_PATH = path.join(__dirname, 'models', 'vosk-en');
 let transcriptBuffer    = [];
 let lastFingerprintSearch    = 0;
 const FINGERPRINT_INTERVAL_MS = 1000;   // don't run fingerprint search more than once per 1s
@@ -902,14 +918,268 @@ app.post('/api/test-transcript', async (req, res) => {
   res.json({ ok: true, foundRef });
 });
 
+// Unified start endpoint — body.engine selects 'deepgram' (cloud) or 'vosk' (offline).
+// Default is deepgram for backward compatibility.
 app.post('/api/start-listening', async (req, res) => {
-  res.json(await startDeepgram(req.body || {}));
+  const engine = String(req.body?.engine || 'deepgram').toLowerCase();
+  if (engine === 'vosk' || engine === 'offline' || engine === 'browser') {
+    return res.json(await startVosk());
+  }
+  return res.json(await startDeepgram(req.body || {}));
 });
 
 app.post('/api/stop-listening', async (_, res) => {
-  await stopDeepgram();
+  // Stop whichever engine is active. Both calls are idempotent / no-op if inactive.
+  if (voskActive) await stopVosk();
+  if (deepgramConnection) await stopDeepgram();
   res.json({ ok: true });
 });
+
+// ── Shared transcript pipeline ───────────────────────────────────────────
+// Called by both the Deepgram WebSocket handler and the /api/stream-text
+// endpoint (browser Web Speech API path). Broadcasts the transcript to
+// clients, runs reference detection on interim + final, and dispatches
+// verbatim / fingerprint / streaming-anchor searches on final segments.
+//
+// `speechFinal` signals utterance boundary — for Deepgram it's their
+// endpointing flag; for browser Web Speech API we set it = isFinal, since
+// each final result is its own utterance.
+async function handleTranscriptSegment(transcript, isFinal, confidence, speechFinal) {
+  broadcast({ type: 'transcript', text: transcript, isFinal, confidence });
+
+  // ── Interim transcripts ───────────────────────────────────────
+  // Reference parser fires on interim for < 2s explicit citations.
+  // Fingerprint also fires on longer interim segments so paraphrase
+  // detection doesn't wait for the endpoint (300-1200ms delay).
+  if (!isFinal) {
+    if (workerBasicReady) {
+      let foundRef = await processForReferences(transcript, false);
+      if (!foundRef && referenceContext.isValid) {
+        const partial = resolvePartialReference(transcript);
+        if (partial && partial.verse) {
+          try {
+            const msg = await workerCall('directLookup', { book: partial.book, chapter: partial.chapter, verse: partial.verse }, 3000);
+            if (msg.result) {
+              broadcastDetection([msg.result], 'direct', 1.0, 'viewer');
+              foundRef = true;
+            }
+          } catch {}
+        }
+      }
+      if (!foundRef) {
+        const interimWords = transcript.split(RE_SPACES).filter(Boolean).length;
+        const now = Date.now();
+        if (rangeQueue.length) checkRangeAutoAdvance();
+        if (interimWords >= 6 && now - lastInterimVerbatim > INTERIM_VERBATIM_MS) {
+          lastInterimVerbatim = now;
+          processVerbatim(transcript).catch(err => console.warn('[Detection] processVerbatim failed:', err.message));
+        }
+        if (interimWords >= 6 && now - lastFingerprintSearch > FINGERPRINT_INTERVAL_MS) {
+          lastFingerprintSearch = now;
+          runFingerprintSearch(transcript, true);
+        }
+      }
+    }
+    return;
+  }
+
+  // ── Final transcript ───────────────────────────────────────────
+  const now = Date.now();
+  const wordCount = transcript.split(/\s+/).filter(Boolean).length;
+  transcriptBuffer.push({ text: transcript, time: now, wordCount });
+  while (transcriptBuffer.length && transcriptBuffer[0].time < now - 90000) transcriptBuffer.shift();
+  hasNewTranscript = true;
+
+  if (workerBasicReady) {
+    processStreamText(transcript).catch(() => {});
+  }
+
+  accumulateTopicWords(transcript);
+  maybeRebuildTopicLibrary();
+
+  if (rangeQueue.length) checkRangeAutoAdvance();
+
+  let foundRef = await processForReferences(transcript, true);
+
+  if (!foundRef && referenceContext.isValid) {
+    const partial = resolvePartialReference(transcript);
+    if (partial) {
+      try {
+        let verses = [];
+        if (partial.verseStart && partial.verseEnd && partial.verseEnd !== partial.verseStart) {
+          const msg = await workerCall('rangeLookup', { book: partial.book, chapter: partial.chapter, verseStart: partial.verseStart, verseEnd: partial.verseEnd }, 3000);
+          verses = msg.results || [];
+        } else if (partial.verse) {
+          const msg = await workerCall('directLookup', { book: partial.book, chapter: partial.chapter, verse: partial.verse }, 3000);
+          if (msg.result) verses = [msg.result];
+        }
+        if (verses.length) {
+          console.log(`[Context] Resolved partial ref "verse ${partial.verse || partial.verseStart}" → ${partial.book} ${partial.chapter}:${partial.verse || partial.verseStart}`);
+          if (verses.length > 1) setRangeQueue(verses);
+          else clearRangeQueue();
+          broadcastDetection(verses, 'direct', 1.0, 'viewer');
+          foundRef = true;
+        }
+      } catch (err) {
+        console.warn('[Context] Partial ref lookup error:', err.message);
+      }
+    }
+  }
+
+  if (transcriptBuffer.length) {
+    transcriptBuffer[transcriptBuffer.length - 1].hasRef = !!foundRef;
+  }
+
+  const sentenceFlushed = speechFinal
+    ? sentenceBuffer.forceFlush()
+    : sentenceBuffer.append(transcript);
+  const textForExpensive = sentenceFlushed || sentenceBuffer.checkTimeout();
+
+  if (workerBasicReady && textForExpensive) {
+    const canFingerprint = now - lastFingerprintSearch > FINGERPRINT_INTERVAL_MS;
+    lastFingerprintSearch = now;
+    await Promise.all([
+      processVerbatim(textForExpensive),
+      canFingerprint
+        ? runFingerprintSearch(textForExpensive, true, !foundRef)
+        : Promise.resolve(),
+    ]);
+  } else if (workerBasicReady && !textForExpensive) {
+    const interimWords = transcript.split(/\s+/).filter(Boolean).length;
+    if (interimWords >= 8) {
+      processVerbatim(transcript).catch(err => console.warn('[Detection] processVerbatim failed:', err.message));
+    }
+  }
+
+  if (speechFinal && workerBasicReady) {
+    const bufferText = transcriptBuffer.map(t => t.text).join(' ').trim();
+    if (bufferText && bufferText !== textForExpensive) {
+      await Promise.all([
+        processVerbatim(bufferText),
+        runFingerprintSearch(bufferText, true, !foundRef),
+      ]);
+    }
+  }
+}
+
+// ── Vosk (offline STT) ────────────────────────────────────────────────────
+// Local, no-internet engine. Audio streams from the client over the same
+// WebSocket the Deepgram path uses. Recognizer results are routed through
+// the shared `handleTranscriptSegment` so detection / broadcast / viewer
+// behaviour is identical to Deepgram.
+function loadVoskModel() {
+  if (voskModel) return voskModel;
+  if (!fs.existsSync(VOSK_MODEL_PATH) || !fs.existsSync(path.join(VOSK_MODEL_PATH, 'conf', 'model.conf'))) {
+    const e = new Error(`Vosk model not found at ${VOSK_MODEL_PATH}. Run: npm run vosk:install`);
+    e.code = 'VOSK_MODEL_MISSING';
+    throw e;
+  }
+  if (!voskLib) voskLib = require('vosk-koffi');
+  // Quiet Vosk's verbose log spam — we only want errors.
+  try { voskLib.setLogLevel(-1); } catch {}
+  voskModel = new voskLib.Model(VOSK_MODEL_PATH);
+  return voskModel;
+}
+
+async function startVosk() {
+  if (connectionState === 'connected' || connectionState === 'connecting') {
+    return { error: 'Already listening' };
+  }
+  try {
+    connectionState = 'connecting';
+    broadcast({ type: 'connection-state', state: 'connecting', engine: 'vosk' });
+
+    const model = loadVoskModel();
+    voskRecognizer = new voskLib.Recognizer({ model, sampleRate: VOSK_SAMPLE_RATE });
+    try { voskRecognizer.setWords(false); } catch {}
+    try { voskRecognizer.setPartialWords(false); } catch {}
+
+    voskActive = true;
+    voskLastPartial = '';
+    connectionState = 'connected';
+    broadcast({ type: 'connection-state', state: 'connected', engine: 'vosk' });
+    return { ok: true, engine: 'vosk' };
+  } catch (err) {
+    voskActive = false;
+    if (voskRecognizer) { try { voskRecognizer.free(); } catch {} voskRecognizer = null; }
+    connectionState = 'error';
+    const friendly = err.code === 'VOSK_MODEL_MISSING'
+      ? 'Offline model missing. Run "npm run vosk:install" to download it (~40MB).'
+      : `Vosk failed to start: ${err.message}`;
+    broadcast({ type: 'connection-state', state: 'error', error: friendly, errorKind: err.code === 'VOSK_MODEL_MISSING' ? 'model-missing' : 'unknown' });
+    return { error: friendly };
+  }
+}
+
+// vosk-koffi's result methods return already-parsed objects (unlike upstream
+// `vosk` which returns JSON strings). Accept both for forward-compat.
+function _voskUnpack(out) {
+  if (!out) return {};
+  if (typeof out === 'string') {
+    try { return JSON.parse(out); } catch { return {}; }
+  }
+  return out;
+}
+
+async function stopVosk() {
+  voskActive = false;
+  clearTimeout(voskPartialFlushTimer);
+  voskPartialFlushTimer = null;
+  if (voskRecognizer) {
+    // Flush any remaining audio so the last utterance lands as a final transcript
+    try {
+      const tail = (_voskUnpack(voskRecognizer.finalResult()).text || '').trim();
+      if (tail) {
+        await handleTranscriptSegment(tail, true, 0.9, true).catch(() => {});
+      }
+    } catch {}
+    try { voskRecognizer.free(); } catch {}
+    voskRecognizer = null;
+  }
+  voskLastPartial = '';
+  connectionState = 'disconnected';
+  broadcast({ type: 'connection-state', state: 'disconnected' });
+}
+
+// Called from the WebSocket binary-message handler when Vosk is the active engine.
+function feedVoskAudio(buffer) {
+  if (!voskActive || !voskRecognizer) return;
+  let isFinal = false;
+  try {
+    isFinal = voskRecognizer.acceptWaveform(buffer);
+  } catch (err) {
+    console.warn('[Vosk] acceptWaveform error:', err.message);
+    return;
+  }
+  if (isFinal) {
+    try {
+      const finalText = (_voskUnpack(voskRecognizer.result()).text || '').trim();
+      voskLastPartial = '';
+      if (finalText) {
+        handleTranscriptSegment(finalText, true, 0.9, true).catch(err => {
+          console.error('[Vosk] final handler error:', err.message);
+        });
+      }
+    } catch (err) {
+      console.warn('[Vosk] result parse error:', err.message);
+    }
+  } else {
+    // Throttle partials — Vosk emits one per chunk and we don't need that rate
+    if (voskPartialFlushTimer) return;
+    voskPartialFlushTimer = setTimeout(() => {
+      voskPartialFlushTimer = null;
+      if (!voskActive || !voskRecognizer) return;
+      try {
+        const partial = (_voskUnpack(voskRecognizer.partialResult()).partial || '').trim();
+        if (!partial || partial === voskLastPartial) return;
+        voskLastPartial = partial;
+        handleTranscriptSegment(partial, false, 0.85, false).catch(err => {
+          console.error('[Vosk] partial handler error:', err.message);
+        });
+      } catch {}
+    }, VOSK_PARTIAL_FLUSH_MS);
+  }
+}
 
 // ── Deepgram ──────────────────────────────────────────────────────────────
 async function startDeepgram(config = {}) {
@@ -1016,153 +1286,12 @@ async function startDeepgram(config = {}) {
           if (!alt?.transcript?.trim()) return;
           deepgramLastTranscriptAt = Date.now();  // stamp every received segment
 
-          const transcript = alt.transcript;
-          const isFinal    = data.is_final;
-          const confidence = alt.confidence || 0;
-          const speechFinal = data.speech_final || false;
-
-          broadcast({ type: 'transcript', text: transcript, isFinal, confidence });
-
-          // ── Interim transcripts ───────────────────────────────────────
-          // Reference parser fires on interim for < 2s explicit citations.
-          // Fingerprint also fires on longer interim segments so paraphrase
-          // detection doesn't wait for the endpoint (300-1200ms delay).
-          if (!isFinal) {
-            if (workerBasicReady) {
-              let foundRef = await processForReferences(transcript, false);
-              // Also try partial resolution on interim for live feedback
-              if (!foundRef && referenceContext.isValid) {
-                const partial = resolvePartialReference(transcript);
-                if (partial && partial.verse) {
-                  try {
-                    const msg = await workerCall('directLookup', { book: partial.book, chapter: partial.chapter, verse: partial.verse }, 3000);
-                    if (msg.result) {
-                      broadcastDetection([msg.result], 'direct', 1.0, 'viewer');
-                      foundRef = true;
-                    }
-                  } catch {}
-                }
-              }
-              if (!foundRef) {
-                const interimWords = transcript.split(RE_SPACES).filter(Boolean).length;
-                const now = Date.now();
-
-                // Range timing check on interim path too — so the advance
-                // fires as soon as the estimated time elapses, not waiting
-                // for the next final segment to arrive.
-                if (rangeQueue.length) checkRangeAutoAdvance();
-
-                // Run verbatim/n-gram search on interim once enough words have
-                // accumulated. This fires detection BEFORE Deepgram's endpoint
-                // silence (300-1200ms), eliminating the "greyed-out waiting"
-                // delay. Throttled to once per 800ms so the worker isn't hammered.
-                if (interimWords >= 6 && now - lastInterimVerbatim > INTERIM_VERBATIM_MS) {
-                  lastInterimVerbatim = now;
-                  processVerbatim(transcript).catch(err => console.warn('[Detection] processVerbatim failed:', err.message));
-                }
-
-                // Fingerprint on longer interim segments for paraphrase detection
-                if (interimWords >= 6 && now - lastFingerprintSearch > FINGERPRINT_INTERVAL_MS) {
-                  lastFingerprintSearch = now;
-                  runFingerprintSearch(transcript, true);
-                }
-              }
-            }
-            return;
-          }
-
-          // ── Final transcript ───────────────────────────────────────────
-          const now = Date.now();
-          const wordCount = transcript.split(/\s+/).filter(Boolean).length;
-          transcriptBuffer.push({ text: transcript, time: now, wordCount });
-          while (transcriptBuffer.length && transcriptBuffer[0].time < now - 90000) transcriptBuffer.shift();
-          hasNewTranscript = true;
-
-          // Streaming anchor match — runs FIRST, before any buffering or
-          // sentence accumulation, so a distinctive 4-gram surfaces as soon
-          // as its final word arrives (not after a punctuation boundary).
-          if (workerBasicReady) {
-            processStreamText(transcript).catch(() => {});
-          }
-
-          // Feed speech into topic accumulator — builds the active verse library
-          // passively in the background as the sermon progresses
-          accumulateTopicWords(transcript);
-          maybeRebuildTopicLibrary();
-
-          // If a verse range is active, check if preacher has moved to the next verse
-          if (rangeQueue.length) checkRangeAutoAdvance();
-
-          // Path 1: direct reference — fires on every final fragment (instant, O(1))
-          let foundRef = await processForReferences(transcript, true);
-
-          // Path 1b: bare verse resolution — "verse 17" in context of Romans 8
-          if (!foundRef && referenceContext.isValid) {
-            const partial = resolvePartialReference(transcript);
-            if (partial) {
-              try {
-                let verses = [];
-                if (partial.verseStart && partial.verseEnd && partial.verseEnd !== partial.verseStart) {
-                  const msg = await workerCall('rangeLookup', { book: partial.book, chapter: partial.chapter, verseStart: partial.verseStart, verseEnd: partial.verseEnd }, 3000);
-                  verses = msg.results || [];
-                } else if (partial.verse) {
-                  const msg = await workerCall('directLookup', { book: partial.book, chapter: partial.chapter, verse: partial.verse }, 3000);
-                  if (msg.result) verses = [msg.result];
-                }
-                if (verses.length) {
-                  console.log(`[Context] Resolved partial ref "verse ${partial.verse || partial.verseStart}" → ${partial.book} ${partial.chapter}:${partial.verse || partial.verseStart}`);
-                  if (verses.length > 1) setRangeQueue(verses);
-                  else clearRangeQueue();
-                  broadcastDetection(verses, 'direct', 1.0, 'viewer');
-                  foundRef = true;
-                }
-              } catch (err) {
-                console.warn('[Context] Partial ref lookup error:', err.message);
-              }
-            }
-          }
-
-          if (transcriptBuffer.length) {
-            transcriptBuffer[transcriptBuffer.length - 1].hasRef = !!foundRef;
-          }
-
-          // ── Sentence buffer — accumulate finals before running expensive paths ──
-          // Verbatim/fingerprint run on complete sentences for better accuracy.
-          // Flushed on: sentence-ending punctuation, speech_final, or 4s timeout.
-          const sentenceFlushed = speechFinal
-            ? sentenceBuffer.forceFlush()
-            : sentenceBuffer.append(transcript);
-
-          const textForExpensive = sentenceFlushed || sentenceBuffer.checkTimeout();
-
-          if (workerBasicReady && textForExpensive) {
-            const canFingerprint = now - lastFingerprintSearch > FINGERPRINT_INTERVAL_MS;
-            lastFingerprintSearch = now;
-            await Promise.all([
-              processVerbatim(textForExpensive),
-              canFingerprint
-                ? runFingerprintSearch(textForExpensive, true, !foundRef)
-                : Promise.resolve(),
-            ]);
-          } else if (workerBasicReady && !textForExpensive) {
-            // Sentence not complete yet — run verbatim on current fragment only
-            // so we don't miss an obvious exact-match quote mid-sentence
-            const interimWords = transcript.split(/\s+/).filter(Boolean).length;
-            if (interimWords >= 8) {
-              processVerbatim(transcript).catch(err => console.warn('[Detection] processVerbatim failed:', err.message));
-            }
-          }
-
-          // ── speech_final sweep over full buffer ────────────────────────
-          if (speechFinal && workerBasicReady) {
-            const bufferText = transcriptBuffer.map(t => t.text).join(' ').trim();
-            if (bufferText && bufferText !== textForExpensive) {
-              await Promise.all([
-                processVerbatim(bufferText),
-                runFingerprintSearch(bufferText, true, !foundRef),
-              ]);
-            }
-          }
+          await handleTranscriptSegment(
+            alt.transcript,
+            data.is_final,
+            alt.confidence || 0,
+            data.speech_final || false,
+          );
         } catch (err) {
           console.error('[Deepgram] Transcript handler error:', err.message);
         }
@@ -1194,10 +1323,15 @@ async function startDeepgram(config = {}) {
         resolve({ error: friendly, errorKind: kind });
       });
 
-      deepgramConnection.on(LiveTranscriptionEvents.Close, (code) => {
+      deepgramConnection.on(LiveTranscriptionEvents.Close, (evt) => {
+        // SDK hands us a CloseEvent — extract the actual numeric code + reason
+        const closeCode   = (evt && typeof evt === 'object' && 'code' in evt) ? evt.code : evt;
+        const closeReason = (evt && typeof evt === 'object' && evt.reason) ? evt.reason : '';
+        const closeDesc   = closeReason ? `${closeCode} "${closeReason}"` : String(closeCode);
+
         // Closed before Open fired = connection rejected
         if (connectionState === 'connecting') {
-          const msg = `Deepgram closed before connecting (code ${code})`;
+          const msg = `Deepgram closed before connecting (code ${closeDesc})`;
           console.error('[Deepgram]', msg);
           connectionState = 'error';
           resolve({ error: msg });
@@ -1210,7 +1344,7 @@ async function startDeepgram(config = {}) {
 
         // Auto-reconnect unless the user explicitly stopped
         if (!deepgramUserStopped) {
-          console.log(`[Deepgram] Connection closed (code ${code}) — reconnecting in 1.5s…`);
+          console.log(`[Deepgram] Connection closed (code ${closeDesc}) — reconnecting in 1.5s…`);
           broadcast({ type: 'connection-state', state: 'reconnecting' });
           // Submit any buffered audio via REST before reconnecting
           submitDeepgramRestFallback().catch(err => console.warn('[Deepgram] REST fallback dispatch failed:', err.message));

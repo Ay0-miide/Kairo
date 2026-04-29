@@ -16,6 +16,9 @@ databases/logos/verses.bin
 databases/logos/model/
 # map.json and kjv.json are required by the Tauri bundle — committed.
 
+# Vosk offline-STT models (downloaded by scripts/download-vosk-model.sh on first use)
+server/models/
+
 # Tauri build output
 src-tauri/target/
 

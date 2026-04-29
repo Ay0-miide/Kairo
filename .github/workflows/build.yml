@@ -45,6 +45,42 @@ jobs:
         working-directory: server
         run: npm ci --omit=dev
 
+      # ── Download Vosk model (offline speech engine) ────────────────────
+      # Bundled into the .app/.msi/.deb so the Offline mode works on first
+      # launch without any network round-trip. ~40MB compressed → ~68MB extracted.
+      - name: Download Vosk model (Unix)
+        if: matrix.platform != 'windows-latest'
+        run: |
+          set -euo pipefail
+          MODEL_DIR="server/models/vosk-en"
+          if [ -d "$MODEL_DIR" ] && [ -f "$MODEL_DIR/conf/model.conf" ]; then
+            echo "Vosk model already present, skipping download"
+          else
+            mkdir -p server/models
+            cd server/models
+            curl -fsSL -o vosk-en.zip "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip"
+            unzip -q vosk-en.zip
+            rm vosk-en.zip
+            mv vosk-model-small-en-us-0.15 vosk-en
+            echo "✓ Vosk model installed at $MODEL_DIR"
+          fi
+
+      - name: Download Vosk model (Windows)
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $MODEL_DIR = "server\models\vosk-en"
+          if (Test-Path "$MODEL_DIR\conf\model.conf") {
+            Write-Host "Vosk model already present, skipping download"
+          } else {
+            New-Item -ItemType Directory -Force -Path "server\models" | Out-Null
+            Invoke-WebRequest -Uri "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip" -OutFile "server\models\vosk-en.zip"
+            Expand-Archive -Path "server\models\vosk-en.zip" -DestinationPath "server\models"
+            Remove-Item "server\models\vosk-en.zip"
+            Rename-Item "server\models\vosk-model-small-en-us-0.15" "vosk-en"
+            Write-Host "✓ Vosk model installed at $MODEL_DIR"
+          }
+
       # ── Rust ───────────────────────────────────────────────────────────
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -156,10 +192,18 @@ jobs:
 
             **AI-powered live Bible verse detection for church services.**
 
+            ### What's new
+            - **Offline speech engine** — runs entirely on-device. No internet, no API key, no monthly cost. Powered by Vosk + the same detection pipeline as the cloud path.
+            - **Cleaner UI** — pill-shaped Start/Stop button (outlined when idle, filled while listening), unified rounded toolbar, teal accent that complements the red brand.
+            - **Slimmer install** — stripped 414MB of unused embedding-model deps from the server.
+
+            ### Pick your engine in Settings → Audio
+            - **Deepgram** — higher accuracy, requires a free API key from [deepgram.com](https://deepgram.com) (12,000 min/month free).
+            - **Offline** — no internet, no key, runs locally. Lower accuracy but always-on.
+
             ### What you need
-            - **Deepgram API key** — free at [deepgram.com](https://deepgram.com) (12,000 min/month free)
-            - Audio source: line-in from mixing board or device mic
-            - macOS, Windows, or Linux
+            - Audio source: line-in from a mixing board or a device mic
+            - macOS (Apple Silicon or Intel), Windows, or Linux
 
             ### Optional integrations
             - ProPresenter (REST API)
@@ -167,11 +211,9 @@ jobs:
             - Syphon / External Display (macOS)
 
             ### Install
-            - **macOS**: Download `.dmg`, open, drag to Applications
+            - **macOS**: Download `.dmg`, open, drag to Applications. (Unsigned build — first launch: right-click → Open, or run `xattr -cr /Applications/KAIRO.app` once.)
             - **Windows**: Download `.msi` installer, run it
             - **Linux**: Download `.deb` (Debian/Ubuntu) or `.rpm` (Fedora/RHEL)
-
-            > First launch: enter your Deepgram API key in Settings → Audio
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}

@@ -197,6 +197,7 @@ function handleConnectionState(state, error) {
   if (state === 'connected') {
     isListening = true;
     if (listenText) listenText.textContent = 'Stop Listening';
+    listenBtn?.classList.add('active');
     listenBtn?.querySelector('svg rect')?.setAttribute('fill', 'currentColor');
     if (micLabel) micLabel.classList.add('pulse');
     if (lsBcastDot) lsBcastDot.classList.add('broadcasting');
@@ -209,6 +210,7 @@ function handleConnectionState(state, error) {
   } else if (state === 'disconnected' || state === 'error') {
     isListening = false;
     if (listenText) listenText.textContent = 'Start Listening';
+    listenBtn?.classList.remove('active');
     if (micLabel) micLabel.classList.remove('pulse');
     if (lsBcastDot) lsBcastDot.classList.remove('broadcasting');
     if (lsBcastLbl) { lsBcastLbl.classList.remove('broadcasting'); lsBcastLbl.textContent = 'Idle'; }
@@ -707,8 +709,15 @@ listenBtn?.addEventListener('click', async () => {
   }
 });
 
+// Both engines use the same client-side audio capture: PCM16 over the
+// existing WebSocket. Only the body of /api/start-listening differs —
+// the server uses `engine` to choose between Deepgram (cloud) and Vosk
+// (offline, on-device).
 async function startListening() {
   if (isListening) return;
+  const engine = (settings.speechEngine || 'deepgram').toLowerCase();
+  // Map UI value 'browser' → server-side 'vosk' so the offline path is selected.
+  const serverEngine = (engine === 'browser' || engine === 'offline') ? 'vosk' : 'deepgram';
   try {
     const deviceId = audioSourceSettings?.value || '';
     const constraints = {
@@ -719,12 +728,16 @@ async function startListening() {
     mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
     if (micDisplay) micDisplay.textContent = mediaStream.getAudioTracks()[0]?.label || 'Microphone';
 
-    // Start server-side Deepgram
-    const r = await fetch(`${SERVER}/api/start-listening`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    // Start the server-side engine (Deepgram or Vosk)
+    const r = await fetch(`${SERVER}/api/start-listening`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ engine: serverEngine }),
+    });
     const d = await r.json();
     if (d.error) { toast(d.error, 'error'); stopAudioCapture(); return; }
 
-    // Stream PCM16 to server via WebSocket
+    // Stream PCM16 to server via WebSocket — same path for both engines.
     audioContext  = new AudioContext({ sampleRate: 16000 });
     const source  = audioContext.createMediaStreamSource(mediaStream);
     audioProcessor = audioContext.createScriptProcessor(4096, 1, 1);
@@ -846,6 +859,21 @@ function initCustomSelects() {
   document.querySelectorAll('select.setting-input:not([data-customized])').forEach(buildCustomSelect);
 }
 
+// ── Toggle-group helpers (for .toggle-group in Settings) ─────────────────
+function syncToggleGroup(groupId, dataKey, value) {
+  const group = document.getElementById(groupId);
+  if (!group || !value) return;
+  group.querySelectorAll('.toggle-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset[dataKey] === value);
+  });
+  // Fire the change handler so dependent UI (hint text etc.) updates too.
+  group.dispatchEvent(new CustomEvent('toggle-change', { detail: { value } }));
+}
+function readToggleGroup(groupId, dataKey) {
+  const active = document.querySelector(`#${groupId} .toggle-btn.active`);
+  return active?.dataset?.[dataKey] || null;
+}
+
 // ── Settings ───────────────────────────────────────────────────────────────
 async function loadSettings() {
   try {
@@ -864,6 +892,9 @@ async function loadSettings() {
     if (obsUrlInput && settings.obsUrl) obsUrlInput.value = settings.obsUrl;
     if (obsPasswordInput && settings.obsPassword) obsPasswordInput.value = settings.obsPassword;
     if (obsTextSourceInput && settings.obsTextSource) obsTextSourceInput.value = settings.obsTextSource;
+    // Restore toggle-group state from persisted settings
+    syncToggleGroup('speech-engine-toggle', 'engine', settings.speechEngine || 'deepgram');
+    syncToggleGroup('audio-mode-toggle',    'mode',   settings.audioMode    || 'mic');
     updatePPTokenLabel();
     initCustomSelects();
     // First-run: no Deepgram key → show a nudge banner so the user knows what to do.
@@ -912,6 +943,8 @@ async function saveCurrentSettings() {
     obsUrl:              obsUrlInput?.value        || 'ws://localhost:4455',
     obsPassword:         obsPasswordInput?.value   || '',
     obsTextSource:       obsTextSourceInput?.value || 'Scripture',
+    speechEngine:        readToggleGroup('speech-engine-toggle', 'engine') || settings.speechEngine || 'deepgram',
+    audioMode:           readToggleGroup('audio-mode-toggle',    'mode')   || settings.audioMode    || 'mic',
   };
   await fetch(`${SERVER}/api/settings`, {
     method: 'POST',

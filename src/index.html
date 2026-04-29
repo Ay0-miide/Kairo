@@ -374,23 +374,24 @@
                     <div class="settings-section-label">Audio</div>
 
                     <div class="setting-group">
+                        <label class="setting-label">Speech Engine</label>
+                        <div class="toggle-group" id="speech-engine-toggle">
+                            <button class="toggle-btn active" data-engine="deepgram">Deepgram</button>
+                            <button class="toggle-btn" data-engine="browser">Offline</button>
+                        </div>
+                        <p class="setting-hint" id="speech-engine-hint">Higher accuracy, requires an API key. 12,000 free minutes/month.</p>
+                    </div>
+
+                    <div class="setting-group" id="deepgram-key-group">
                         <label class="setting-label">Deepgram API Key</label>
                         <input type="password" id="deepgram-key" class="setting-input" placeholder="dg_...">
                     </div>
 
                     <div class="setting-group">
-                        <label class="setting-label">Speech Engine</label>
-                        <div class="toggle-group" id="speech-engine-toggle">
-                            <button class="toggle-btn active" data-engine="deepgram">Deepgram</button>
-                            <button class="toggle-btn" data-engine="browser">Browser (Free)</button>
-                        </div>
-                    </div>
-
-                    <div class="setting-group">
                         <label class="setting-label">Audio Input</label>
                         <div class="toggle-group" id="audio-mode-toggle">
-                            <button class="toggle-btn active" data-mode="mic">🎙 Mic</button>
-                            <button class="toggle-btn" data-mode="line-in">🔌 Line In</button>
+                            <button class="toggle-btn active" data-mode="mic">Mic</button>
+                            <button class="toggle-btn" data-mode="line-in">Line In</button>
                         </div>
                         <p class="setting-hint" id="audio-mode-hint">Built-in or USB microphone with noise suppression</p>
                     </div>
@@ -616,18 +617,31 @@
             }
         });
 
+        // Generic toggle-group wiring — every .toggle-group in the doc gets
+        // click-to-activate behaviour for its children.
+        document.querySelectorAll('.toggle-group').forEach(function(group) {
+            group.querySelectorAll('.toggle-btn').forEach(function(btn) {
+                btn.addEventListener('click', function() {
+                    if (btn.classList.contains('active')) return;
+                    group.querySelectorAll('.toggle-btn').forEach(function(b) { b.classList.remove('active'); });
+                    btn.classList.add('active');
+                    // Dispatch a change event so setting-specific handlers can react.
+                    group.dispatchEvent(new CustomEvent('toggle-change', {
+                        detail: { value: btn.dataset.engine || btn.dataset.mode || btn.dataset.layout }
+                    }));
+                });
+            });
+        });
+
         // Layout toggles — show/hide opacity slider for lower-third
         ['syphon', 'external'].forEach(function(prefix) {
             var group = document.getElementById(prefix + '-layout-toggle');
             var opacityGroup = document.getElementById(prefix + '-opacity-group');
-            if (!group) return;
-            group.querySelectorAll('.toggle-btn').forEach(function(btn) {
-                btn.addEventListener('click', function() {
-                    group.querySelectorAll('.toggle-btn').forEach(function(b) { b.classList.remove('active'); });
-                    btn.classList.add('active');
-                    if (opacityGroup) opacityGroup.style.display = btn.dataset.layout === 'lower-third' ? '' : 'none';
+            if (group && opacityGroup) {
+                group.addEventListener('toggle-change', function(e) {
+                    opacityGroup.style.display = e.detail.value === 'lower-third' ? '' : 'none';
                 });
-            });
+            }
             // Opacity label sync
             var slider = document.getElementById(prefix + '-bg-opacity');
             var label  = document.getElementById(prefix + '-opacity-label');
@@ -635,6 +649,42 @@
                 slider.addEventListener('input', function() { label.textContent = slider.value + '%'; });
             }
         });
+
+        // Audio Input mode — update hint text
+        (function() {
+            var group = document.getElementById('audio-mode-toggle');
+            var hint  = document.getElementById('audio-mode-hint');
+            if (!group || !hint) return;
+            var HINTS = {
+                'mic':     'Built-in or USB microphone with noise suppression',
+                'line-in': 'Line-level input from a mixing board or external interface',
+            };
+            group.addEventListener('toggle-change', function(e) {
+                hint.textContent = HINTS[e.detail.value] || '';
+            });
+        })();
+
+        // Speech Engine — swap hint, hide/show Deepgram key field.
+        // 'browser' is the UI label kept for backward compat — it actually maps
+        // to the server-side Vosk offline engine (no internet, no API key).
+        (function() {
+            var group   = document.getElementById('speech-engine-toggle');
+            var hint    = document.getElementById('speech-engine-hint');
+            var keyGrp  = document.getElementById('deepgram-key-group');
+            if (!group) return;
+            var HINTS = {
+                'deepgram': 'Higher accuracy, requires an API key. 12,000 free minutes/month.',
+                'browser':  'Runs entirely on this Mac — no internet, no API key. Accuracy is lower than Deepgram.',
+            };
+            function apply(value) {
+                if (hint) hint.textContent = HINTS[value] || '';
+                if (keyGrp) keyGrp.style.display = value === 'browser' ? 'none' : '';
+            }
+            group.addEventListener('toggle-change', function(e) { apply(e.detail.value); });
+            // Initial sync — in case loadSettings has already run before this IIFE.
+            var active = group.querySelector('.toggle-btn.active');
+            if (active) apply(active.dataset.engine);
+        })();
 
         // ── Display window helper ──────────────────────────────────────────
         // In Tauri, window.open() routes to the system browser — we must use
