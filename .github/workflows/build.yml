@@ -45,6 +45,25 @@ jobs:
         working-directory: server
         run: npm ci --omit=dev
 
+      # ── Mirror vosk-koffi native lib for the universal Mac build ──────
+      # The upstream vosk-osx zip is a universal binary (x86_64 + arm64),
+      # but the postinstall only creates bin-darwin-${process.arch} for the
+      # CI runner's arch. We need both directory names so Intel + Apple
+      # Silicon users both resolve at runtime.
+      - name: Mirror vosk-koffi bin dir for both Mac arches
+        if: matrix.platform == 'macos-latest'
+        run: |
+          set -e
+          ARM="server/node_modules/vosk-koffi/bin-darwin-arm64"
+          X64="server/node_modules/vosk-koffi/bin-darwin-x64"
+          if [ -d "$ARM" ] && [ ! -d "$X64" ]; then
+            cp -R "$ARM" "$X64"
+            echo "✓ mirrored $ARM → $X64"
+          elif [ -d "$X64" ] && [ ! -d "$ARM" ]; then
+            cp -R "$X64" "$ARM"
+            echo "✓ mirrored $X64 → $ARM"
+          fi
+
       # ── Download Vosk model (offline speech engine) ────────────────────
       # Bundled into the .app/.msi/.deb so the Offline mode works on first
       # launch without any network round-trip. ~40MB compressed → ~68MB extracted.
