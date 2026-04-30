@@ -541,7 +541,7 @@
                         </div>
                     </div>
 
-                    <!-- Card 4: NDI -->
+                    <!-- Card 4: NDI (native sender) -->
                     <div class="output-card" id="card-ndi">
                         <div class="output-card-header" data-card="ndi">
                             <label class="output-toggle" title="Enable NDI output">
@@ -558,28 +558,16 @@
                                     <input type="text" id="ndi-source-name" class="setting-input" value="KAIRO Scripture" style="flex:1;">
                                     <button id="test-ndi-btn" class="modal-btn secondary" style="white-space:nowrap;">Test</button>
                                 </div>
-                                <div style="font-size:11px;color:var(--text-3);margin-top:4px;">Look for this name in your NDI receiver (vMix, TriCaster, OBS-NDI, NDI Tools).</div>
+                                <div style="font-size:11px;color:var(--text-3);margin-top:4px;">This name appears on the network for vMix, TriCaster, OBS-NDI, NDI Tools, etc.</div>
                             </div>
-                            <div class="setting-group">
-                                <label class="setting-label">Layout</label>
-                                <div class="toggle-group" id="ndi-layout-toggle">
-                                    <button class="toggle-btn active" data-layout="fullscreen">Fullscreen</button>
-                                    <button class="toggle-btn" data-layout="lower-third">Lower Third</button>
-                                </div>
+                            <div style="display:flex;align-items:center;gap:8px;margin:14px 0 6px 0;">
+                                <span id="ndi-status" style="font-size:11px;color:var(--text-3);">Checking NDI runtime…</span>
                             </div>
-                            <div class="setting-group" id="ndi-opacity-group" style="display:none;">
-                                <label class="setting-label">Background Opacity</label>
-                                <div style="display:flex;align-items:center;gap:10px;">
-                                    <input type="range" id="ndi-bg-opacity" min="0" max="100" value="80" style="flex:1;">
-                                    <span id="ndi-opacity-label" style="font-size:11px;color:var(--text-2);min-width:30px;">80%</span>
-                                </div>
+                            <div id="ndi-install-hint" style="display:none;font-size:11px;color:var(--text-2);line-height:1.55;padding:10px 12px;background:rgba(232,64,74,0.08);border-left:2px solid var(--red);border-radius:4px;">
+                                <strong style="color:var(--text);">NDI runtime not found.</strong> Install free <a href="https://ndi.video/tools/" target="_blank" rel="noopener" style="color:#4db6ac;">NDI Tools</a> (or the NDI SDK) so KAIRO can broadcast directly. After install, click Test.
                             </div>
-                            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-                                <button id="open-ndi-btn" class="modal-btn secondary" style="flex:1;justify-content:center;">Open NDI Window</button>
-                                <span id="ndi-status" style="font-size:11px;color:var(--text-2);"></span>
-                            </div>
-                            <div style="font-size:11px;color:var(--text-3);line-height:1.5;padding:10px 12px;background:rgba(77,182,172,0.06);border-left:2px solid #4db6ac;border-radius:4px;">
-                                <strong style="color:var(--text);">Heads up:</strong> KAIRO ships an NDI-ready display window — capture it with <strong>NDI Scan Converter</strong> (NewTek NDI Tools, free) or pipe it through OBS with the NDI output plugin. A native NDI sender (KAIRO appears directly on the network without a bridge) is on the roadmap.
+                            <div id="ndi-active-hint" style="display:none;font-size:11px;color:var(--text-3);line-height:1.55;padding:10px 12px;background:rgba(77,182,172,0.06);border-left:2px solid #4db6ac;border-radius:4px;">
+                                Broadcasting at <strong style="color:var(--text);">1280×720 / 15 fps</strong>. Detected verses render directly to the NDI frame in real time — no capture bridge required.
                             </div>
                         </div>
                     </div>
@@ -687,7 +675,7 @@
         });
 
         // Layout toggles — show/hide opacity slider for lower-third
-        ['syphon', 'ndi', 'external'].forEach(function(prefix) {
+        ['syphon', 'external'].forEach(function(prefix) {
             var group = document.getElementById(prefix + '-layout-toggle');
             var opacityGroup = document.getElementById(prefix + '-opacity-group');
             if (group && opacityGroup) {
@@ -843,63 +831,126 @@
             });
         }
 
-        // NDI: same setup pattern as Syphon — open the window, Test confirms it.
-        // Real native NDI broadcasting is on the roadmap; until then this window
-        // is the capture target for NDI Scan Converter / OBS-NDI / vMix etc.
-        var ndiStatusEl = document.getElementById('ndi-status');
-        function setNdiStatus(text, kind) {
-            if (!ndiStatusEl) return;
-            ndiStatusEl.textContent = text;
-            ndiStatusEl.style.color =
-                kind === 'active' ? 'var(--green)' :
-                kind === 'error'  ? 'var(--red)'   : 'var(--text-3)';
-        }
-        async function isNdiWindowOpen() {
-            if (!window.__TAURI__) return false;
-            try {
-                var WW = window.__TAURI__.webviewWindow.WebviewWindow;
-                var w  = await WW.getByLabel('kairo-ndi');
-                if (!w) return false;
-                try { return await w.isVisible(); } catch (_) { return false; }
-            } catch (_) { return false; }
-        }
-        setNdiStatus('Not broadcasting', 'idle');
-        isNdiWindowOpen().then(function(open) {
-            setNdiStatus(open ? '● Broadcasting' : 'Not broadcasting', open ? 'active' : 'idle');
-        });
+        // NDI: NATIVE sender driven through Tauri commands defined in src-tauri.
+        // Loads libndi at runtime from NDI Tools / NDI SDK install paths.
+        // Frames are rendered server-side in Rust (tiny-skia + cosmic-text)
+        // and pushed directly to the network — no display window needed.
+        (function() {
+            var ndiStatusEl  = document.getElementById('ndi-status');
+            var ndiToggle    = document.getElementById('ndi-enabled-toggle');
+            var ndiNameInput = document.getElementById('ndi-source-name');
+            var testNdiBtn   = document.getElementById('test-ndi-btn');
+            var installHint  = document.getElementById('ndi-install-hint');
+            var activeHint   = document.getElementById('ndi-active-hint');
+            var invokeFn = window.__TAURI__?.core?.invoke || window.__TAURI__?.invoke;
 
-        function openNdiWindow() {
-            var layout  = document.querySelector('#ndi-layout-toggle .toggle-btn.active')?.dataset.layout || 'fullscreen';
-            var opacity = document.getElementById('ndi-bg-opacity')?.value || '80';
-            var name    = document.getElementById('ndi-source-name')?.value || 'KAIRO Scripture';
-            var url = '/display.html?layout=' + layout + '&opacity=' + opacity + '&name=' + encodeURIComponent(name);
-            openDisplayWindow('kairo-ndi', url, { width: 1280, height: 720 });
-            setNdiStatus('● Broadcasting', 'active');
-        }
-        var openNdiBtn = document.getElementById('open-ndi-btn');
-        if (openNdiBtn) openNdiBtn.addEventListener('click', openNdiWindow);
+            function setNdiStatus(text, kind) {
+                if (!ndiStatusEl) return;
+                ndiStatusEl.textContent = text;
+                ndiStatusEl.style.color =
+                    kind === 'active' ? 'var(--green)' :
+                    kind === 'error'  ? 'var(--red)'   :
+                    kind === 'warn'   ? '#fbbf24'      : 'var(--text-3)';
+            }
+            function showHint(which) {
+                if (installHint) installHint.style.display = which === 'install' ? '' : 'none';
+                if (activeHint)  activeHint.style.display  = which === 'active'  ? '' : 'none';
+            }
 
-        var testNdiBtn = document.getElementById('test-ndi-btn');
-        if (testNdiBtn) {
-            testNdiBtn.addEventListener('click', async function() {
-                testNdiBtn.textContent = 'Testing…';
+            async function detectAvailability() {
+                if (!invokeFn) {
+                    // Running in plain browser (dev preview) — no Tauri commands.
+                    setNdiStatus('NDI not available (run inside the app)', 'warn');
+                    return false;
+                }
                 try {
-                    var alreadyOpen = await isNdiWindowOpen();
-                    if (alreadyOpen) {
-                        var WW = window.__TAURI__?.webviewWindow.WebviewWindow;
-                        var w  = WW ? await WW.getByLabel('kairo-ndi') : null;
-                        if (w) { try { await w.show(); } catch(_){} try { await w.setFocus(); } catch(_){} }
-                        setNdiStatus('● Broadcasting', 'active');
+                    var ok = await invokeFn('ndi_available');
+                    if (ok) {
+                        setNdiStatus('NDI runtime detected — ready', 'idle');
+                        showHint(null);
                     } else {
-                        openNdiWindow();
+                        setNdiStatus('NDI runtime not installed', 'warn');
+                        showHint('install');
+                        if (ndiToggle) { ndiToggle.checked = false; ndiToggle.disabled = true; }
+                    }
+                    return !!ok;
+                } catch (e) {
+                    setNdiStatus('NDI check failed: ' + e, 'error');
+                    return false;
+                }
+            }
+
+            async function startNdi() {
+                if (!invokeFn) return;
+                var name = (ndiNameInput?.value || 'KAIRO Scripture').trim() || 'KAIRO Scripture';
+                try {
+                    await invokeFn('ndi_start', { sourceName: name });
+                    setNdiStatus('● Broadcasting "' + name + '"', 'active');
+                    showHint('active');
+                    // Push the current preview text immediately so the NDI source
+                    // doesn't show a blank frame until the next verse fires.
+                    var verse = document.getElementById('preview-verse-text')?.textContent || '';
+                    var ref   = document.getElementById('preview-verse-ref')?.textContent  || '';
+                    if (verse && verse !== 'Nothing on display') {
+                        invokeFn('ndi_update', { verse: verse, reference: ref }).catch(function(){});
                     }
                 } catch (e) {
-                    setNdiStatus('Test failed', 'error');
-                } finally {
-                    testNdiBtn.textContent = 'Test';
+                    setNdiStatus('Failed: ' + e, 'error');
+                    if (ndiToggle) ndiToggle.checked = false;
                 }
-            });
-        }
+            }
+            async function stopNdi() {
+                if (!invokeFn) return;
+                try { await invokeFn('ndi_stop'); } catch (_) {}
+                setNdiStatus('Not broadcasting', 'idle');
+                showHint(null);
+            }
+
+            // Toggle handler
+            if (ndiToggle) {
+                ndiToggle.addEventListener('change', function() {
+                    if (ndiToggle.checked) startNdi();
+                    else                   stopNdi();
+                });
+            }
+
+            // Test = re-detect + (re)start. If the user installed NDI Tools
+            // after launching, this picks it up.
+            if (testNdiBtn) {
+                testNdiBtn.addEventListener('click', async function() {
+                    testNdiBtn.textContent = 'Testing…';
+                    if (ndiToggle) ndiToggle.disabled = false;
+                    try {
+                        var avail = await detectAvailability();
+                        if (avail && ndiToggle?.checked) {
+                            await startNdi();
+                        } else if (avail) {
+                            // Available but toggle off — tell user to flip it.
+                            setNdiStatus('NDI runtime detected — toggle on to broadcast', 'idle');
+                        }
+                    } finally {
+                        testNdiBtn.textContent = 'Test';
+                    }
+                });
+            }
+
+            // Re-broadcast source-name changes while live.
+            if (ndiNameInput) {
+                var debounce = null;
+                ndiNameInput.addEventListener('input', function() {
+                    if (!ndiToggle?.checked) return;
+                    clearTimeout(debounce);
+                    debounce = setTimeout(function() {
+                        // Restart sender with the new name (NDI source name is
+                        // immutable per session, so recreate).
+                        stopNdi().then(startNdi);
+                    }, 600);
+                });
+            }
+
+            // Initial detection (debounce slightly so window has time to mount Tauri).
+            setTimeout(detectAvailability, 250);
+        })();
 
         // Open External Display window
         var openExternalBtn = document.getElementById('open-external-btn');

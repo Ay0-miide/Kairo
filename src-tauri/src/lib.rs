@@ -3,9 +3,12 @@
 // Dev mode: uses system node (beforeDevCommand starts it externally).
 // Production: uses the node binary bundled via externalBin.
 
+mod ndi;
+
 use std::process::{Child, Command};
 use std::sync::{Arc, Mutex};
 use base64::Engine;
+use tauri::utils::config::Color;
 use tauri::{AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
 #[cfg(not(debug_assertions))]
 use tauri::Emitter;
@@ -23,6 +26,10 @@ fn splash_data_url() -> String {
 }
 
 struct ServerProcess(Arc<Mutex<Option<Child>>>);
+
+/// Shared NDI sender state. The frontend manipulates this through the
+/// ndi_* Tauri commands; the actual sender thread runs inside the ndi module.
+struct NdiState(Arc<Mutex<ndi::NdiHandle>>);
 
 // ── Node.js binary resolution ─────────────────────────────────────────────
 
@@ -174,6 +181,42 @@ async fn install_update(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+// ── NDI commands ──────────────────────────────────────────────────────────
+// The frontend calls these to drive the native NDI sender. We don't bundle
+// libndi; the user's NDI Tools install (or NDI SDK) provides it.
+
+#[tauri::command]
+fn ndi_available() -> bool {
+    ndi::is_libndi_available()
+}
+
+#[tauri::command]
+fn ndi_start(app: AppHandle, source_name: String) -> Result<(), String> {
+    let state = app.state::<NdiState>();
+    let h = state.0.lock().map_err(|e| e.to_string())?;
+    if h.is_running() {
+        return Ok(()); // idempotent — already broadcasting
+    }
+    drop(h);
+    ndi::start(&source_name, state.0.clone())
+}
+
+#[tauri::command]
+fn ndi_stop(app: AppHandle) -> Result<(), String> {
+    let state = app.state::<NdiState>();
+    let mut h = state.0.lock().map_err(|e| e.to_string())?;
+    h.stop();
+    Ok(())
+}
+
+#[tauri::command]
+fn ndi_update(app: AppHandle, verse: String, reference: String) -> Result<(), String> {
+    let state = app.state::<NdiState>();
+    let h = state.0.lock().map_err(|e| e.to_string())?;
+    h.update(verse, reference);
+    Ok(())
+}
+
 // ── App entry ─────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -182,7 +225,15 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(ServerProcess(Arc::new(Mutex::new(None))))
-        .invoke_handler(tauri::generate_handler![get_server_port, install_update])
+        .manage(NdiState(Arc::new(Mutex::new(ndi::NdiHandle::default()))))
+        .invoke_handler(tauri::generate_handler![
+            get_server_port,
+            install_update,
+            ndi_available,
+            ndi_start,
+            ndi_stop,
+            ndi_update,
+        ])
         .setup(|app| {
             let handle = app.handle().clone();
 
@@ -204,6 +255,10 @@ pub fn run() {
             .always_on_top(true)
             .resizable(false)
             .skip_taskbar(false)
+            // Set the native window + webview background to dark BEFORE HTML
+            // paints, otherwise there's a brief white flash on launch while
+            // the webview transitions from its default white to our gradient.
+            .background_color(Color(13, 13, 13, 255))
             .visible(true)
             .build();
             if let Err(e) = &splash_built {

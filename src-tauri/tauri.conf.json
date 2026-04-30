@@ -1,6 +1,6 @@
 {
   "productName": "KAIRO",
-  "version": "2.2.2",
+  "version": "2.3.0",
   "identifier": "com.kairo.scripture",
   "build": {
     "beforeDevCommand": "npm run server",
@@ -24,7 +24,8 @@
         "transparent": false,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
-        "visible": false
+        "visible": false,
+        "backgroundColor": "#0d0d0d"
       }
     ]
   },

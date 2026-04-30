@@ -212,10 +212,14 @@ jobs:
             **AI-powered live Bible verse detection for church services.**
 
             ### What's new
-            - **NDI output card** — new output target with the same setup flow as ProPresenter (source name + Test button + status). Capture-bridge ready for OBS-NDI / NDI Tools / vMix; native sender on the roadmap.
-            - **Syphon setup parity** — Syphon card now mirrors ProPresenter's flow: source name + Test button + live status indicator.
-            - **5 new lower-third theme presets** — Glass, Broadcast, Ribbon, Bold Title, Whisper, Brand Block. Distinct typography, color, and background treatments.
-            - **"Open Settings" banner** — fixed: clicking the first-run nudge actually opens settings now (previously a dead link).
+            - **Native NDI sender** — KAIRO now appears directly on the network as an NDI source. Frames are rendered in pure Rust (tiny-skia + cosmic-text) and sent without any capture bridge. Settings → Outputs → NDI → toggle on. Requires [NDI Tools](https://ndi.video/tools/) (free) installed; KAIRO loads `libndi` from the standard install paths at runtime.
+            - **3 new lower-third layout variants** — `lower-third-card` (bottom-left offset card), `corner-card` (compact upper-right pop-in), `side-rail` (full-height left rail). Each comes with a matching theme preset.
+            - **No more white splash flash** — splash window now starts with the dark gradient already painted; main window also uses a dark base color so transitions are seamless.
+
+            ### Carried over from v2.2.2
+            - 5 lower-third theme presets (Broadcast, Ribbon, Bold Title, Whisper, Brand Block)
+            - Syphon setup parity with ProPresenter
+            - "Open Settings" banner fix
 
             ### Carried over from v2.2.1
             - **macOS launch fix** — bundled Node sidecar ships with JIT entitlements (was the v2.2.0 white-screen cause).

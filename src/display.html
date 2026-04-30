@@ -157,13 +157,33 @@
                     div.style.webkitBackdropFilter = 'blur(24px)';
                 }
 
-                // Lower-third / ticker: bg only covers the bottom strip
+                // Layout-specific background coverage. Each layout puts the
+                // background in a different shape/position so the rendered
+                // text overlay sits on top correctly.
                 if (layout === 'lower-third') {
                     div.style.inset  = 'auto 0 0 0';
                     div.style.height = '40%';
                 } else if (layout === 'ticker') {
                     div.style.inset  = 'auto 0 0 0';
                     div.style.height = '18%';
+                } else if (layout === 'lower-third-card') {
+                    // Bottom-left card with margin — leaves the right side clean
+                    div.style.inset  = 'auto auto 6% 4%';
+                    div.style.width  = '64%';
+                    div.style.height = '32%';
+                    div.style.borderRadius = '12px';
+                    div.style.overflow = 'hidden';
+                } else if (layout === 'corner-card') {
+                    // Compact upper-right card — for quick quote pop-ins
+                    div.style.inset  = '6% 4% auto auto';
+                    div.style.width  = '38%';
+                    div.style.height = '24%';
+                    div.style.borderRadius = '10px';
+                    div.style.overflow = 'hidden';
+                } else if (layout === 'side-rail') {
+                    // Full-height left rail
+                    div.style.inset  = '0 auto 0 0';
+                    div.style.width  = '32%';
                 }
 
                 frag.appendChild(div);
@@ -242,6 +262,45 @@
                     div.style.whiteSpace    = 'nowrap';
                     div.style.overflow      = 'hidden';
                     div.style.textOverflow  = 'ellipsis';
+                } else if (layout === 'lower-third-card') {
+                    // Text positioned inside the bottom-left card (matches bg insets)
+                    div.style.left    = '4%';
+                    div.style.width   = '64%';
+                    div.style.padding = '0 3%';
+                    if (layer.binding === 'verse') {
+                        div.style.bottom = '14%';
+                    } else if (layer.binding === 'reference') {
+                        div.style.bottom = '32%';
+                    } else {
+                        div.style.bottom = '20%';
+                    }
+                } else if (layout === 'corner-card') {
+                    // Text inside the upper-right compact card
+                    div.style.right   = '4%';
+                    div.style.width   = '38%';
+                    div.style.padding = '0 3%';
+                    if (layer.binding === 'reference') {
+                        div.style.top = '8%';
+                    } else if (layer.binding === 'verse') {
+                        div.style.top = '15%';
+                    } else {
+                        div.style.top = '11%';
+                    }
+                } else if (layout === 'side-rail') {
+                    // Text centered vertically inside the left rail
+                    div.style.left    = '0';
+                    div.style.width   = '32%';
+                    div.style.padding = '0 3%';
+                    if (layer.binding === 'verse') {
+                        div.style.top       = '50%';
+                        div.style.transform = 'translateY(-40%)';
+                    } else if (layer.binding === 'reference') {
+                        div.style.top       = '50%';
+                        div.style.transform = 'translateY(60%)';
+                    } else {
+                        div.style.top       = '50%';
+                        div.style.transform = 'translateY(-50%)';
+                    }
                 }
 
                 div.textContent = content;

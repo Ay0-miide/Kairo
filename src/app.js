@@ -74,6 +74,42 @@ const clearSuggestionsBtn = document.getElementById('clear-suggestions-btn');
 const clearTranscriptBtn = document.getElementById('clear-transcript');
 const previewVerseText   = document.getElementById('preview-verse-text');
 const previewVerseRef    = document.getElementById('preview-verse-ref');
+
+// ── Native NDI bridge ────────────────────────────────────────────────────
+// Whenever the live preview verse changes, push it to the native Rust NDI
+// sender so the broadcast frame stays in sync. Coalesce rapid changes via
+// requestAnimationFrame so we don't issue redundant invokes during multi-
+// step UI updates (e.g. clear → new verse fires two mutations in one tick).
+(function wireNdiBridge() {
+  const tauriInvoke = window.__TAURI__?.core?.invoke || window.__TAURI__?.invoke;
+  if (!tauriInvoke || !previewVerseText) return;
+  let scheduled = false;
+  let lastSent = '';
+  function pushToNdi() {
+    scheduled = false;
+    const verse = (previewVerseText.textContent || '').trim();
+    const ref   = (previewVerseRef?.textContent || '').trim();
+    if (!verse || verse === 'Nothing on display') {
+      if (lastSent === '') return;
+      lastSent = '';
+      tauriInvoke('ndi_update', { verse: '', reference: '' }).catch(() => {});
+      return;
+    }
+    const sig = ref + '' + verse;
+    if (sig === lastSent) return;
+    lastSent = sig;
+    tauriInvoke('ndi_update', { verse, reference: ref }).catch(() => {});
+  }
+  function schedule() {
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(pushToNdi);
+  }
+  new MutationObserver(schedule).observe(previewVerseText, { characterData: true, childList: true, subtree: true });
+  if (previewVerseRef) {
+    new MutationObserver(schedule).observe(previewVerseRef, { characterData: true, childList: true, subtree: true });
+  }
+})();
 const currentDisplayCard = document.getElementById('current-display-card');
 const queueList          = document.getElementById('queue-list');
 const suggestionCount    = document.getElementById('suggestion-count');
@@ -1315,6 +1351,60 @@ const DEFAULT_LOOKS = [
       { id: 'ref',   type: 'text', name: 'Reference', visible: true, binding: 'reference', customText: '',
         font: { family: 'Manrope', size: 13, weight: 800, italic: false, lineHeight: 1.2, letterSpacing: 5, transform: 'uppercase' },
         color: '#ffffff', opacity: 80, align: 'left',
+        shadow: { enabled: false, color: '#000000', opacity: 70, blur: 4, x: 0, y: 1 },
+        outline: { enabled: false, color: '#000000', width: 1 } },
+    ],
+  },
+  {
+    // Bottom-left offset card — gives the right side breathing room (great when
+    // the broadcast has a presenter shot on the right of frame).
+    id: 'card-bottom-left', name: 'Bottom-Left Card', layout: 'lower-third-card', animation: 'slide-up',
+    layers: [
+      { id: 'bg',    type: 'background', name: 'Background', visible: true, fill: 'gradient', color: '#0d0d11', opacity: 95, color2: '#1f1f28', angle: 135 },
+      { id: 'verse', type: 'text', name: 'Verse Text', visible: true, binding: 'verse', customText: '',
+        font: { family: 'Manrope', size: 28, weight: 500, italic: false, lineHeight: 1.35, letterSpacing: 0, transform: 'none' },
+        color: '#ffffff', opacity: 100, align: 'left',
+        shadow: { enabled: false, color: '#000000', opacity: 70, blur: 4, x: 0, y: 1 },
+        outline: { enabled: false, color: '#000000', width: 1 } },
+      { id: 'ref',   type: 'text', name: 'Reference', visible: true, binding: 'reference', customText: '',
+        font: { family: 'Manrope', size: 13, weight: 700, italic: false, lineHeight: 1.2, letterSpacing: 5, transform: 'uppercase' },
+        color: '#e8404a', opacity: 100, align: 'left',
+        shadow: { enabled: false, color: '#000000', opacity: 70, blur: 4, x: 0, y: 1 },
+        outline: { enabled: false, color: '#000000', width: 1 } },
+    ],
+  },
+  {
+    // Compact upper-right corner pop-in — minimal footprint, useful when the
+    // preacher quotes briefly and you don't want to cover the slide entirely.
+    id: 'corner-pop', name: 'Corner Pop', layout: 'corner-card', animation: 'fade',
+    layers: [
+      { id: 'bg',    type: 'background', name: 'Background', visible: true, fill: 'solid', color: '#000000', opacity: 88, color2: '#000000', angle: 0 },
+      { id: 'verse', type: 'text', name: 'Verse Text', visible: true, binding: 'verse', customText: '',
+        font: { family: 'Manrope', size: 18, weight: 500, italic: false, lineHeight: 1.4, letterSpacing: 0, transform: 'none' },
+        color: '#ffffff', opacity: 100, align: 'left',
+        shadow: { enabled: false, color: '#000000', opacity: 70, blur: 4, x: 0, y: 1 },
+        outline: { enabled: false, color: '#000000', width: 1 } },
+      { id: 'ref',   type: 'text', name: 'Reference', visible: true, binding: 'reference', customText: '',
+        font: { family: 'Manrope', size: 11, weight: 700, italic: false, lineHeight: 1.2, letterSpacing: 4, transform: 'uppercase' },
+        color: '#4db6ac', opacity: 100, align: 'left',
+        shadow: { enabled: false, color: '#000000', opacity: 70, blur: 4, x: 0, y: 1 },
+        outline: { enabled: false, color: '#000000', width: 1 } },
+    ],
+  },
+  {
+    // Vertical left rail — full-height accent bar with verse + ref centered.
+    // Pairs well with portrait video / mobile-first streams.
+    id: 'side-rail-rail', name: 'Side Rail', layout: 'side-rail', animation: 'slide-up',
+    layers: [
+      { id: 'bg',    type: 'background', name: 'Background', visible: true, fill: 'gradient', color: '#0d0e14', opacity: 95, color2: '#1a1f2e', angle: 180 },
+      { id: 'verse', type: 'text', name: 'Verse Text', visible: true, binding: 'verse', customText: '',
+        font: { family: 'Manrope', size: 22, weight: 500, italic: false, lineHeight: 1.4, letterSpacing: 0, transform: 'none' },
+        color: '#ffffff', opacity: 100, align: 'left',
+        shadow: { enabled: false, color: '#000000', opacity: 70, blur: 4, x: 0, y: 1 },
+        outline: { enabled: false, color: '#000000', width: 1 } },
+      { id: 'ref',   type: 'text', name: 'Reference', visible: true, binding: 'reference', customText: '',
+        font: { family: 'Manrope', size: 12, weight: 700, italic: false, lineHeight: 1.2, letterSpacing: 5, transform: 'uppercase' },
+        color: '#e8404a', opacity: 100, align: 'left',
         shadow: { enabled: false, color: '#000000', opacity: 70, blur: 4, x: 0, y: 1 },
         outline: { enabled: false, color: '#000000', width: 1 } },
     ],

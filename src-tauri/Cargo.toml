@@ -1,6 +1,6 @@
 [package]
 name = "kairo"
-version = "2.2.2"
+version = "2.3.0"
 description = "KAIRO — AI Scripture Assistant"
 authors = ["KAIRO"]
 edition = "2021"
@@ -21,6 +21,15 @@ serde_json = "1"
 reqwest = { version = "0.12", features = ["blocking"] }
 tokio = { version = "1", features = ["time"] }
 base64 = "0.22"
+
+# NDI native sender — links to libndi.dylib/dll/so at runtime via libloading.
+# We don't bundle the NDI SDK; KAIRO finds libndi on the user's system from
+# the standard NDI Tools / NDI SDK install paths. Renders verse text frames
+# in pure Rust (no webview capture) so this works headless.
+libloading = "0.8"
+tiny-skia  = "0.11"
+cosmic-text = "0.12"
+crossbeam-channel = "0.5"
 
 [profile.release]
 panic = "abort"
