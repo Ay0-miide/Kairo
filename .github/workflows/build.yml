@@ -211,15 +211,18 @@ jobs:
 
             **AI-powered live Bible verse detection for church services.**
 
-            ### Fixes in this release
-            - **macOS white screen on launch** — bundled Node sidecar now ships with the JIT entitlements V8 needs. The white screen on v2.2.0 was caused by Tauri's ad-hoc re-signing stripping those entitlements; now they're explicitly applied.
-            - **Branded loading splash** — instant feedback while the server boots. No more blank window during startup.
-            - **Microphone usage prompt** — proper macOS permission dialog with a clear description.
+            ### What's new
+            - **NDI output card** — new output target with the same setup flow as ProPresenter (source name + Test button + status). Capture-bridge ready for OBS-NDI / NDI Tools / vMix; native sender on the roadmap.
+            - **Syphon setup parity** — Syphon card now mirrors ProPresenter's flow: source name + Test button + live status indicator.
+            - **5 new lower-third theme presets** — Glass, Broadcast, Ribbon, Bold Title, Whisper, Brand Block. Distinct typography, color, and background treatments.
+            - **"Open Settings" banner** — fixed: clicking the first-run nudge actually opens settings now (previously a dead link).
 
-            ### Carried over from v2.2.0
+            ### Carried over from v2.2.1
+            - **macOS launch fix** — bundled Node sidecar ships with JIT entitlements (was the v2.2.0 white-screen cause).
+            - **Branded loading splash** — instant feedback while the server boots.
+            - **Microphone permission prompt** — proper macOS dialog with a usage description.
             - **Offline speech engine** — runs entirely on-device. No internet, no API key, no monthly cost. Powered by Vosk.
-            - **Pill Start/Stop button** — outlined when idle, filled while listening. Unified rounded toolbar.
-            - **414MB lighter** — stripped unused embedding-stack deps.
+            - **Pill Start/Stop button** — outlined when idle, filled while listening.
 
             ### Pick your engine in Settings → Audio
             - **Deepgram** — higher accuracy, requires a free API key from [deepgram.com](https://deepgram.com) (12,000 min/month free).

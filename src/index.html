@@ -513,6 +513,14 @@
                         </div>
                         <div class="output-card-body output-card-body--collapsed">
                             <div class="setting-group">
+                                <label class="setting-label">Source Name</label>
+                                <div style="display:flex;gap:6px;">
+                                    <input type="text" id="syphon-source-name" class="setting-input" value="KAIRO Scripture" style="flex:1;">
+                                    <button id="test-syphon-btn" class="modal-btn secondary" style="white-space:nowrap;">Test</button>
+                                </div>
+                                <div style="font-size:11px;color:var(--text-3);margin-top:4px;">Look for this name in your Syphon-compatible app (OBS, Resolume, MadMapper).</div>
+                            </div>
+                            <div class="setting-group">
                                 <label class="setting-label">Layout</label>
                                 <div class="toggle-group" id="syphon-layout-toggle">
                                     <button class="toggle-btn active" data-layout="fullscreen">Fullscreen</button>
@@ -526,12 +534,57 @@
                                     <span id="syphon-opacity-label" style="font-size:11px;color:var(--text-2);min-width:30px;">80%</span>
                                 </div>
                             </div>
-                            <button id="open-syphon-btn" class="modal-btn secondary" style="width:100%;justify-content:center;">Open Syphon Window</button>
-                            <p class="setting-hint">Open this window in any Syphon-compatible app (e.g. OBS, Resolume, MadMapper) to use as a source.</p>
+                            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                                <button id="open-syphon-btn" class="modal-btn secondary" style="flex:1;justify-content:center;">Open Syphon Window</button>
+                                <span id="syphon-status" style="font-size:11px;color:var(--text-2);"></span>
+                            </div>
                         </div>
                     </div>
 
-                    <!-- Card 4: External Display -->
+                    <!-- Card 4: NDI -->
+                    <div class="output-card" id="card-ndi">
+                        <div class="output-card-header" data-card="ndi">
+                            <label class="output-toggle" title="Enable NDI output">
+                                <input type="checkbox" id="ndi-enabled-toggle">
+                                <span class="output-toggle-track"></span>
+                            </label>
+                            <span class="output-card-name">NDI</span>
+                            <span class="output-card-chevron">▾</span>
+                        </div>
+                        <div class="output-card-body output-card-body--collapsed">
+                            <div class="setting-group">
+                                <label class="setting-label">Source Name</label>
+                                <div style="display:flex;gap:6px;">
+                                    <input type="text" id="ndi-source-name" class="setting-input" value="KAIRO Scripture" style="flex:1;">
+                                    <button id="test-ndi-btn" class="modal-btn secondary" style="white-space:nowrap;">Test</button>
+                                </div>
+                                <div style="font-size:11px;color:var(--text-3);margin-top:4px;">Look for this name in your NDI receiver (vMix, TriCaster, OBS-NDI, NDI Tools).</div>
+                            </div>
+                            <div class="setting-group">
+                                <label class="setting-label">Layout</label>
+                                <div class="toggle-group" id="ndi-layout-toggle">
+                                    <button class="toggle-btn active" data-layout="fullscreen">Fullscreen</button>
+                                    <button class="toggle-btn" data-layout="lower-third">Lower Third</button>
+                                </div>
+                            </div>
+                            <div class="setting-group" id="ndi-opacity-group" style="display:none;">
+                                <label class="setting-label">Background Opacity</label>
+                                <div style="display:flex;align-items:center;gap:10px;">
+                                    <input type="range" id="ndi-bg-opacity" min="0" max="100" value="80" style="flex:1;">
+                                    <span id="ndi-opacity-label" style="font-size:11px;color:var(--text-2);min-width:30px;">80%</span>
+                                </div>
+                            </div>
+                            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                                <button id="open-ndi-btn" class="modal-btn secondary" style="flex:1;justify-content:center;">Open NDI Window</button>
+                                <span id="ndi-status" style="font-size:11px;color:var(--text-2);"></span>
+                            </div>
+                            <div style="font-size:11px;color:var(--text-3);line-height:1.5;padding:10px 12px;background:rgba(77,182,172,0.06);border-left:2px solid #4db6ac;border-radius:4px;">
+                                <strong style="color:var(--text);">Heads up:</strong> KAIRO ships an NDI-ready display window — capture it with <strong>NDI Scan Converter</strong> (NewTek NDI Tools, free) or pipe it through OBS with the NDI output plugin. A native NDI sender (KAIRO appears directly on the network without a bridge) is on the roadmap.
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Card 5: External Display -->
                     <div class="output-card" id="card-external">
                         <div class="output-card-header" data-card="external">
                             <label class="output-toggle" title="Enable External Display output">
@@ -634,7 +687,7 @@
         });
 
         // Layout toggles — show/hide opacity slider for lower-third
-        ['syphon', 'external'].forEach(function(prefix) {
+        ['syphon', 'ndi', 'external'].forEach(function(prefix) {
             var group = document.getElementById(prefix + '-layout-toggle');
             var opacityGroup = document.getElementById(prefix + '-opacity-group');
             if (group && opacityGroup) {
@@ -728,14 +781,123 @@
             }
         }
 
-        // Open Syphon window
+        // Syphon: setup flow mirrors ProPresenter — open the window, then a
+        // Test button confirms it's broadcasting (i.e. window exists & visible).
+        var syphonStatusEl = document.getElementById('syphon-status');
+        function setSyphonStatus(text, kind) {
+            if (!syphonStatusEl) return;
+            syphonStatusEl.textContent = text;
+            syphonStatusEl.style.color =
+                kind === 'active' ? 'var(--green)' :
+                kind === 'error'  ? 'var(--red)'   : 'var(--text-3)';
+        }
+        async function isSyphonWindowOpen() {
+            if (!window.__TAURI__) return false;
+            try {
+                var WW = window.__TAURI__.webviewWindow.WebviewWindow;
+                var w  = await WW.getByLabel('kairo-syphon');
+                if (!w) return false;
+                // visible() can throw if window is gone; treat as not open
+                try { return await w.isVisible(); } catch (_) { return false; }
+            } catch (_) { return false; }
+        }
+        // Initial state
+        setSyphonStatus('Not broadcasting', 'idle');
+        isSyphonWindowOpen().then(function(open) {
+            setSyphonStatus(open ? '● Broadcasting' : 'Not broadcasting', open ? 'active' : 'idle');
+        });
+
         var openSyphonBtn = document.getElementById('open-syphon-btn');
-        if (openSyphonBtn) {
-            openSyphonBtn.addEventListener('click', function() {
-                var layout  = document.querySelector('#syphon-layout-toggle .toggle-btn.active')?.dataset.layout || 'fullscreen';
-                var opacity = document.getElementById('syphon-bg-opacity')?.value || '80';
-                var url = '/display.html?layout=' + layout + '&opacity=' + opacity;
-                openDisplayWindow('kairo-syphon', url, { width: 1280, height: 720 });
+        function openSyphonWindow() {
+            var layout  = document.querySelector('#syphon-layout-toggle .toggle-btn.active')?.dataset.layout || 'fullscreen';
+            var opacity = document.getElementById('syphon-bg-opacity')?.value || '80';
+            var name    = document.getElementById('syphon-source-name')?.value || 'KAIRO Scripture';
+            var url = '/display.html?layout=' + layout + '&opacity=' + opacity + '&name=' + encodeURIComponent(name);
+            openDisplayWindow('kairo-syphon', url, { width: 1280, height: 720 });
+            setSyphonStatus('● Broadcasting', 'active');
+        }
+        if (openSyphonBtn) openSyphonBtn.addEventListener('click', openSyphonWindow);
+
+        // Test: same affordance ProPresenter has — confirms the output is live.
+        // If the window isn't open yet, open it; if it is, focus it.
+        var testSyphonBtn = document.getElementById('test-syphon-btn');
+        if (testSyphonBtn) {
+            testSyphonBtn.addEventListener('click', async function() {
+                testSyphonBtn.textContent = 'Testing…';
+                try {
+                    var alreadyOpen = await isSyphonWindowOpen();
+                    if (alreadyOpen) {
+                        // Focus the existing window
+                        var WW = window.__TAURI__?.webviewWindow.WebviewWindow;
+                        var w  = WW ? await WW.getByLabel('kairo-syphon') : null;
+                        if (w) { try { await w.show(); } catch(_){} try { await w.setFocus(); } catch(_){} }
+                        setSyphonStatus('● Broadcasting', 'active');
+                    } else {
+                        openSyphonWindow();
+                    }
+                } catch (e) {
+                    setSyphonStatus('Test failed', 'error');
+                } finally {
+                    testSyphonBtn.textContent = 'Test';
+                }
+            });
+        }
+
+        // NDI: same setup pattern as Syphon — open the window, Test confirms it.
+        // Real native NDI broadcasting is on the roadmap; until then this window
+        // is the capture target for NDI Scan Converter / OBS-NDI / vMix etc.
+        var ndiStatusEl = document.getElementById('ndi-status');
+        function setNdiStatus(text, kind) {
+            if (!ndiStatusEl) return;
+            ndiStatusEl.textContent = text;
+            ndiStatusEl.style.color =
+                kind === 'active' ? 'var(--green)' :
+                kind === 'error'  ? 'var(--red)'   : 'var(--text-3)';
+        }
+        async function isNdiWindowOpen() {
+            if (!window.__TAURI__) return false;
+            try {
+                var WW = window.__TAURI__.webviewWindow.WebviewWindow;
+                var w  = await WW.getByLabel('kairo-ndi');
+                if (!w) return false;
+                try { return await w.isVisible(); } catch (_) { return false; }
+            } catch (_) { return false; }
+        }
+        setNdiStatus('Not broadcasting', 'idle');
+        isNdiWindowOpen().then(function(open) {
+            setNdiStatus(open ? '● Broadcasting' : 'Not broadcasting', open ? 'active' : 'idle');
+        });
+
+        function openNdiWindow() {
+            var layout  = document.querySelector('#ndi-layout-toggle .toggle-btn.active')?.dataset.layout || 'fullscreen';
+            var opacity = document.getElementById('ndi-bg-opacity')?.value || '80';
+            var name    = document.getElementById('ndi-source-name')?.value || 'KAIRO Scripture';
+            var url = '/display.html?layout=' + layout + '&opacity=' + opacity + '&name=' + encodeURIComponent(name);
+            openDisplayWindow('kairo-ndi', url, { width: 1280, height: 720 });
+            setNdiStatus('● Broadcasting', 'active');
+        }
+        var openNdiBtn = document.getElementById('open-ndi-btn');
+        if (openNdiBtn) openNdiBtn.addEventListener('click', openNdiWindow);
+
+        var testNdiBtn = document.getElementById('test-ndi-btn');
+        if (testNdiBtn) {
+            testNdiBtn.addEventListener('click', async function() {
+                testNdiBtn.textContent = 'Testing…';
+                try {
+                    var alreadyOpen = await isNdiWindowOpen();
+                    if (alreadyOpen) {
+                        var WW = window.__TAURI__?.webviewWindow.WebviewWindow;
+                        var w  = WW ? await WW.getByLabel('kairo-ndi') : null;
+                        if (w) { try { await w.show(); } catch(_){} try { await w.setFocus(); } catch(_){} }
+                        setNdiStatus('● Broadcasting', 'active');
+                    } else {
+                        openNdiWindow();
+                    }
+                } catch (e) {
+                    setNdiStatus('Test failed', 'error');
+                } finally {
+                    testNdiBtn.textContent = 'Test';
+                }
             });
         }
 

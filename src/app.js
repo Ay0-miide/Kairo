@@ -924,8 +924,9 @@ function showFirstRunBannerIfNeeded(s) {
   // Insert at the very top of the page, above everything.
   document.body.insertBefore(banner, document.body.firstChild);
   document.getElementById('frb-open-settings').addEventListener('click', () => {
-    settingsModal?.classList.add('open');
-    deepgramKeyInput?.focus();
+    settingsModal?.classList.remove('hidden');
+    // Defer focus so the modal has time to lay out before we focus inside it.
+    setTimeout(() => deepgramKeyInput?.focus(), 50);
   });
   document.getElementById('frb-close').addEventListener('click', () => banner.remove());
 }
@@ -1218,7 +1219,7 @@ const DEFAULT_LOOKS = [
     ],
   },
   {
-    id: 'lower-third', name: 'Lower Third', layout: 'lower-third', animation: 'slide-up',
+    id: 'lower-third', name: 'Lower Third — Glass', layout: 'lower-third', animation: 'slide-up',
     layers: [
       { id: 'bg',    type: 'background', name: 'Background', visible: true, fill: 'blur', color: '#000000', opacity: 85, color2: '#000000', angle: 0 },
       { id: 'verse', type: 'text', name: 'Verse Text', visible: true, binding: 'verse', customText: '',
@@ -1229,6 +1230,91 @@ const DEFAULT_LOOKS = [
       { id: 'ref',   type: 'text', name: 'Reference', visible: true, binding: 'reference', customText: '',
         font: { family: 'Manrope', size: 18, weight: 700, italic: false, lineHeight: 1.2, letterSpacing: 4, transform: 'uppercase' },
         color: '#ffffff', opacity: 60, align: 'left',
+        shadow: { enabled: false, color: '#000000', opacity: 70, blur: 4, x: 0, y: 1 },
+        outline: { enabled: false, color: '#000000', width: 1 } },
+    ],
+  },
+  {
+    // Solid dark slate strip with red accent reference — broadcast-news style
+    id: 'lower-third-broadcast', name: 'Lower Third — Broadcast', layout: 'lower-third', animation: 'slide-up',
+    layers: [
+      { id: 'bg',    type: 'background', name: 'Background', visible: true, fill: 'solid', color: '#0a0e14', opacity: 95, color2: '#0a0e14', angle: 0 },
+      { id: 'verse', type: 'text', name: 'Verse Text', visible: true, binding: 'verse', customText: '',
+        font: { family: 'Manrope', size: 32, weight: 500, italic: false, lineHeight: 1.3, letterSpacing: 0, transform: 'none' },
+        color: '#ffffff', opacity: 100, align: 'left',
+        shadow: { enabled: false, color: '#000000', opacity: 70, blur: 4, x: 0, y: 1 },
+        outline: { enabled: false, color: '#000000', width: 1 } },
+      { id: 'ref',   type: 'text', name: 'Reference', visible: true, binding: 'reference', customText: '',
+        font: { family: 'Manrope', size: 14, weight: 800, italic: false, lineHeight: 1.2, letterSpacing: 6, transform: 'uppercase' },
+        color: '#e8404a', opacity: 100, align: 'left',
+        shadow: { enabled: false, color: '#000000', opacity: 70, blur: 4, x: 0, y: 1 },
+        outline: { enabled: false, color: '#000000', width: 1 } },
+    ],
+  },
+  {
+    // Gradient ribbon — warm dark→teal sweep, centered modern serif
+    id: 'lower-third-ribbon', name: 'Lower Third — Ribbon', layout: 'lower-third', animation: 'slide-up',
+    layers: [
+      { id: 'bg',    type: 'background', name: 'Background', visible: true, fill: 'gradient', color: '#0d1b1f', opacity: 92, color2: '#1f4d4a', angle: 90 },
+      { id: 'verse', type: 'text', name: 'Verse Text', visible: true, binding: 'verse', customText: '',
+        font: { family: 'Playfair Display', size: 38, weight: 500, italic: true, lineHeight: 1.3, letterSpacing: 0, transform: 'none' },
+        color: '#ffffff', opacity: 100, align: 'center',
+        shadow: { enabled: true, color: '#000000', opacity: 50, blur: 8, x: 0, y: 2 },
+        outline: { enabled: false, color: '#000000', width: 1 } },
+      { id: 'ref',   type: 'text', name: 'Reference', visible: true, binding: 'reference', customText: '',
+        font: { family: 'Manrope', size: 13, weight: 600, italic: false, lineHeight: 1.2, letterSpacing: 5, transform: 'uppercase' },
+        color: '#4db6ac', opacity: 100, align: 'center',
+        shadow: { enabled: false, color: '#000000', opacity: 70, blur: 4, x: 0, y: 1 },
+        outline: { enabled: false, color: '#000000', width: 1 } },
+    ],
+  },
+  {
+    // Solid black bar, large white verse, ref in muted brand red — bold + readable on stream
+    id: 'lower-third-bold', name: 'Lower Third — Bold Title', layout: 'lower-third', animation: 'slide-up',
+    layers: [
+      { id: 'bg',    type: 'background', name: 'Background', visible: true, fill: 'solid', color: '#000000', opacity: 100, color2: '#000000', angle: 0 },
+      { id: 'verse', type: 'text', name: 'Verse Text', visible: true, binding: 'verse', customText: '',
+        font: { family: 'Manrope', size: 42, weight: 800, italic: false, lineHeight: 1.2, letterSpacing: -0.5, transform: 'none' },
+        color: '#ffffff', opacity: 100, align: 'left',
+        shadow: { enabled: false, color: '#000000', opacity: 70, blur: 4, x: 0, y: 1 },
+        outline: { enabled: false, color: '#000000', width: 1 } },
+      { id: 'ref',   type: 'text', name: 'Reference', visible: true, binding: 'reference', customText: '',
+        font: { family: 'Manrope', size: 15, weight: 700, italic: false, lineHeight: 1.2, letterSpacing: 5, transform: 'uppercase' },
+        color: '#e8404a', opacity: 95, align: 'left',
+        shadow: { enabled: false, color: '#000000', opacity: 70, blur: 4, x: 0, y: 1 },
+        outline: { enabled: false, color: '#000000', width: 1 } },
+    ],
+  },
+  {
+    // Minimal whisper — barely-there gradient, light typography, low contrast
+    id: 'lower-third-whisper', name: 'Lower Third — Whisper', layout: 'lower-third', animation: 'fade',
+    layers: [
+      { id: 'bg',    type: 'background', name: 'Background', visible: true, fill: 'gradient', color: '#000000', opacity: 60, color2: '#000000', angle: 0 },
+      { id: 'verse', type: 'text', name: 'Verse Text', visible: true, binding: 'verse', customText: '',
+        font: { family: 'Manrope', size: 30, weight: 300, italic: false, lineHeight: 1.4, letterSpacing: 0.3, transform: 'none' },
+        color: '#ffffff', opacity: 92, align: 'center',
+        shadow: { enabled: true, color: '#000000', opacity: 80, blur: 12, x: 0, y: 2 },
+        outline: { enabled: false, color: '#000000', width: 1 } },
+      { id: 'ref',   type: 'text', name: 'Reference', visible: true, binding: 'reference', customText: '',
+        font: { family: 'Manrope', size: 12, weight: 500, italic: false, lineHeight: 1.2, letterSpacing: 6, transform: 'uppercase' },
+        color: '#ffffff', opacity: 55, align: 'center',
+        shadow: { enabled: true, color: '#000000', opacity: 80, blur: 8, x: 0, y: 1 },
+        outline: { enabled: false, color: '#000000', width: 1 } },
+    ],
+  },
+  {
+    // Brand block — solid red brand color, white verse, white reference badge above
+    id: 'lower-third-brand', name: 'Lower Third — Brand Block', layout: 'lower-third', animation: 'slide-up',
+    layers: [
+      { id: 'bg',    type: 'background', name: 'Background', visible: true, fill: 'gradient', color: '#c0353d', opacity: 95, color2: '#8a2128', angle: 135 },
+      { id: 'verse', type: 'text', name: 'Verse Text', visible: true, binding: 'verse', customText: '',
+        font: { family: 'Manrope', size: 34, weight: 600, italic: false, lineHeight: 1.3, letterSpacing: 0, transform: 'none' },
+        color: '#ffffff', opacity: 100, align: 'left',
+        shadow: { enabled: true, color: '#000000', opacity: 30, blur: 8, x: 0, y: 2 },
+        outline: { enabled: false, color: '#000000', width: 1 } },
+      { id: 'ref',   type: 'text', name: 'Reference', visible: true, binding: 'reference', customText: '',
+        font: { family: 'Manrope', size: 13, weight: 800, italic: false, lineHeight: 1.2, letterSpacing: 5, transform: 'uppercase' },
+        color: '#ffffff', opacity: 80, align: 'left',
         shadow: { enabled: false, color: '#000000', opacity: 70, blur: 4, x: 0, y: 1 },
         outline: { enabled: false, color: '#000000', width: 1 } },
     ],
@@ -1251,7 +1337,16 @@ const DEFAULT_LOOKS = [
   },
 ];
 
-let looks       = JSON.parse(localStorage.getItem('kairo-looks-v2') || 'null') || DEFAULT_LOOKS;
+// Load saved looks from localStorage and back-fill any NEW default-look IDs
+// the user doesn't have yet (so adding new built-in lower-third designs in
+// future releases shows up for existing users without nuking their custom themes).
+let looks = (function loadLooks() {
+  const stored = JSON.parse(localStorage.getItem('kairo-looks-v2') || 'null');
+  if (!stored || !Array.isArray(stored) || stored.length === 0) return DEFAULT_LOOKS;
+  const knownIds = new Set(stored.map(l => l.id));
+  const missing  = DEFAULT_LOOKS.filter(d => !knownIds.has(d.id));
+  return missing.length ? [...stored, ...missing] : stored;
+})();
 let activeLook  = looks[0];
 let activeLayer = null; // currently selected layer object
 
