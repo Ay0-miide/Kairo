@@ -238,7 +238,9 @@ const server = http.createServer(app);
 const wss    = new WebSocketServer({ server });
 
 app.use(cors());
-app.use(express.json());
+// Cap body size — sermon transcripts comfortably fit, but prevents memory
+// exhaustion from a malicious or runaway client posting megabytes of garbage.
+app.use(express.json({ limit: '4mb' }));
 app.use(express.static(path.join(__dirname, '..', 'src')));
 
 // ── WebSocket ─────────────────────────────────────────────────────────────
@@ -935,6 +937,308 @@ app.post('/api/stop-listening', async (_, res) => {
   res.json({ ok: true });
 });
 
+// ─────────────────────────────────────────────────────────────────────────
+// CONTENT STUDIO — sermon notes & sermon points
+//   Saved sessions live as JSON in <app-data>/sessions/<id>.json. Generation
+//   runs through a local Ollama instance — fully offline. Anti-hallucination
+//   guardrails: only verses that actually fired during the session are
+//   passed to the model, and any scripture refs in the response that aren't
+//   in that whitelist are stripped post-hoc.
+// ─────────────────────────────────────────────────────────────────────────
+const SESSIONS_DIR = process.env.KAIRO_APP_DATA_DIR
+  ? path.join(process.env.KAIRO_APP_DATA_DIR, 'sessions')
+  : path.join(__dirname, '..', 'databases', 'sessions');
+
+function ensureSessionsDir() { fs.mkdirSync(SESSIONS_DIR, { recursive: true }); }
+function sessionPath(id) {
+  if (!/^[A-Za-z0-9_\-]+$/.test(String(id || ''))) return null;
+  return path.join(SESSIONS_DIR, `${id}.json`);
+}
+function readSession(id) {
+  const p = sessionPath(id);
+  if (!p || !fs.existsSync(p)) return null;
+  try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return null; }
+}
+function writeSession(s) {
+  ensureSessionsDir();
+  const p = sessionPath(s.id);
+  if (!p) throw new Error('invalid session id');
+  fs.writeFileSync(p, JSON.stringify(s, null, 2));
+}
+
+app.get('/api/sessions', (_req, res) => {
+  ensureSessionsDir();
+  let files = [];
+  try { files = fs.readdirSync(SESSIONS_DIR).filter(f => f.endsWith('.json')); } catch {}
+  const list = files.map(f => {
+    try {
+      const s = JSON.parse(fs.readFileSync(path.join(SESSIONS_DIR, f), 'utf8'));
+      return {
+        id: s.id,
+        title: s.title || s.date || s.id,
+        date: s.date,
+        durationMin: s.durationMin || 0,
+        verseCount: (s.verses || []).length,
+        wordCount: (s.transcript || '').split(/\s+/).filter(Boolean).length,
+        hasNote: !!(s.generated && s.generated.note),
+        hasPoints: !!(s.generated && s.generated.points),
+        createdAt: s.createdAt,
+      };
+    } catch { return null; }
+  }).filter(Boolean);
+  list.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  res.json({ sessions: list });
+});
+
+app.get('/api/sessions/:id', (req, res) => {
+  const s = readSession(req.params.id);
+  if (!s) return res.status(404).json({ error: 'not found' });
+  res.json(s);
+});
+
+// Hard caps on session size. Even an hour-long sermon rarely exceeds ~10k
+// words; these limits give plenty of headroom and prevent a misbehaving
+// client from filling the disk.
+const MAX_TRANSCRIPT_CHARS = 200_000;
+const MAX_VERSES_PER_SESSION = 500;
+
+app.post('/api/sessions', (req, res) => {
+  const body = req.body || {};
+  const transcript = String(body.transcript || '').trim().slice(0, MAX_TRANSCRIPT_CHARS);
+  const verses = (Array.isArray(body.verses) ? body.verses : [])
+    .slice(0, MAX_VERSES_PER_SESSION)
+    .map(v => ({
+      ref:  String(v?.ref  || '').slice(0, 80),
+      text: String(v?.text || '').slice(0, 4000),
+      time: String(v?.time || '').slice(0, 16),
+    }))
+    .filter(v => v.ref);
+  if (!transcript && !verses.length && !body.id) {
+    return res.status(400).json({ error: 'empty session — record some audio first' });
+  }
+  const now = new Date();
+  const id = body.id ? String(body.id).slice(0, 64) : now.toISOString().replace(/[:.]/g, '-');
+  if (!/^[A-Za-z0-9_\-]+$/.test(id)) {
+    return res.status(400).json({ error: 'invalid session id' });
+  }
+  const existing = body.id ? readSession(body.id) : null;
+  const session = existing || {};
+  session.id          = id;
+  session.title       = body.title       ?? session.title       ?? `Session — ${now.toLocaleDateString()}`;
+  session.date        = body.date        ?? session.date        ?? now.toISOString().slice(0, 10);
+  session.durationMin = body.durationMin ?? session.durationMin ?? 0;
+  session.transcript  = transcript || session.transcript || '';
+  session.verses      = verses.length ? verses : (session.verses || []);
+  session.generated   = session.generated || {};
+  session.createdAt   = session.createdAt || now.toISOString();
+  session.updatedAt   = now.toISOString();
+  try { writeSession(session); }
+  catch (e) { return res.status(500).json({ error: e.message }); }
+  res.json({ ok: true, id, session });
+});
+
+app.delete('/api/sessions/:id', (req, res) => {
+  const p = sessionPath(req.params.id);
+  if (!p || !fs.existsSync(p)) return res.status(404).json({ error: 'not found' });
+  try { fs.unlinkSync(p); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+function ollamaUrl()   { return (loadSettings().ollamaUrl   || 'http://localhost:11434').replace(/\/+$/, ''); }
+function ollamaModel() { return  loadSettings().ollamaModel || 'qwen2.5:7b-instruct'; }
+
+app.get('/api/llm/status', async (_req, res) => {
+  const url = ollamaUrl();
+  try {
+    const r = await axios.get(url + '/api/tags', { timeout: 1500 });
+    const models = (r.data?.models || []).map(m => m.name);
+    res.json({ ok: true, url, models, configuredModel: ollamaModel() });
+  } catch (e) {
+    res.json({ ok: false, url, error: e.code || e.message });
+  }
+});
+
+// Streams Ollama's `/api/pull` progress through to the client as NDJSON.
+// Client disconnect = pull cancellation: we destroy the upstream stream so
+// Ollama stops fetching layers.
+// Ollama model names: <namespace>/<name>:<tag> — alphanumerics, dots, dashes,
+// underscores, slashes, colons. Reject anything else so we don't pass weird
+// strings (or accidental shell metacharacters) downstream.
+const MODEL_NAME_RE = /^[A-Za-z0-9._:\-\/]{1,128}$/;
+
+app.post('/api/llm/pull', async (req, res) => {
+  const model = String(req.body?.model || ollamaModel()).trim();
+  if (!model || !MODEL_NAME_RE.test(model)) {
+    return res.status(400).json({ error: 'invalid model name' });
+  }
+  const url = ollamaUrl();
+
+  res.setHeader('Content-Type', 'application/x-ndjson');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+
+  let upstream;
+  try {
+    upstream = await axios.post(url + '/api/pull',
+      { name: model, stream: true },
+      { responseType: 'stream', timeout: 0 }
+    );
+  } catch (e) {
+    res.write(JSON.stringify({ error: 'Cannot reach Ollama: ' + (e.code || e.message) }) + '\n');
+    return res.end();
+  }
+
+  let cancelled = false;
+  req.on('close', () => {
+    cancelled = true;
+    try { upstream.data.destroy(); } catch {}
+  });
+  upstream.data.on('data', chunk => { if (!cancelled) res.write(chunk); });
+  upstream.data.on('end',   () => res.end());
+  upstream.data.on('error', e => {
+    try { res.write(JSON.stringify({ error: e.message }) + '\n'); } catch {}
+    res.end();
+  });
+});
+
+// Hard cap on transcript words shipped to the model — keeps inference fast
+// on 7B models and prevents context-window overflows. Long sermons keep the
+// most recent 4k words; the user can export the full transcript separately.
+const TRANSCRIPT_WORD_CAP = 4000;
+function clampTranscript(t) {
+  if (!t) return '';
+  const words = t.split(/\s+/);
+  return words.length <= TRANSCRIPT_WORD_CAP ? t : words.slice(-TRANSCRIPT_WORD_CAP).join(' ');
+}
+
+const NOTE_PROMPT = `You are a sermon-transcript analyst. Produce a faithful, structured sermon note from the transcript and verified scripture list provided.
+
+STRICT RULES:
+1. Use ONLY material present in the transcript.
+2. Cite scriptures only by reference — never paraphrase or reword Bible text.
+3. Only reference scriptures from the verified list. Never invent references.
+4. If the transcript is too short or unclear for a section, return an empty array — do not pad.
+5. Output JSON ONLY matching this schema:
+{
+  "title": string,
+  "summary": string,
+  "sections": [
+    { "heading": string, "body": string, "scriptures": [string] }
+  ],
+  "closing": string
+}`;
+
+const POINTS_PROMPT = `You are a sermon-transcript analyst. Extract the preacher's main points as a bullet outline.
+
+STRICT RULES:
+1. Use ONLY material present in the transcript.
+2. Each point must be grounded in something the preacher actually said.
+3. Tie each point to one scripture from the verified list when possible — otherwise leave scripture as null.
+4. supportingQuote, if present, must be an EXACT short fragment from the transcript (max 25 words). If no clean quote, use null.
+5. 3–7 points, ordered by appearance in the transcript.
+6. Output JSON ONLY matching this schema:
+{
+  "title": string,
+  "mainTheme": string,
+  "points": [
+    { "point": string, "explanation": string, "scripture": string | null, "supportingQuote": string | null }
+  ]
+}`;
+
+function buildUserPayload(session) {
+  const verseList = (session.verses || [])
+    .map(v => `- ${v.ref}${v.text ? `: "${String(v.text).replace(/"/g, "'")}"` : ''}`)
+    .join('\n') || '(none — preacher did not cite any tracked verses)';
+  return `VERIFIED SCRIPTURES (the only references you may cite):
+${verseList}
+
+TRANSCRIPT:
+${clampTranscript(session.transcript || '')}`;
+}
+
+function sanitizeNote(out, allowed) {
+  if (!out || typeof out !== 'object') return null;
+  const ok = new Set(allowed);
+  const sections = Array.isArray(out.sections) ? out.sections : [];
+  return {
+    title:   String(out.title   || '').slice(0, 200),
+    summary: String(out.summary || '').slice(0, 600),
+    sections: sections.slice(0, 12).map(s => ({
+      heading:    String(s.heading || '').slice(0, 120),
+      body:       String(s.body    || '').slice(0, 1200),
+      scriptures: Array.isArray(s.scriptures) ? s.scriptures.filter(r => ok.has(r)) : [],
+    })).filter(s => s.heading || s.body),
+    closing: String(out.closing || '').slice(0, 400),
+  };
+}
+
+function sanitizePoints(out, allowed) {
+  if (!out || typeof out !== 'object') return null;
+  const ok = new Set(allowed);
+  const points = Array.isArray(out.points) ? out.points : [];
+  return {
+    title:     String(out.title     || '').slice(0, 200),
+    mainTheme: String(out.mainTheme || '').slice(0, 400),
+    points: points.slice(0, 10).map(p => ({
+      point:           String(p.point       || '').slice(0, 200),
+      explanation:     String(p.explanation || '').slice(0, 800),
+      scripture:       p.scripture && ok.has(p.scripture) ? p.scripture : null,
+      supportingQuote: p.supportingQuote ? String(p.supportingQuote).slice(0, 250) : null,
+    })).filter(p => p.point),
+  };
+}
+
+app.post('/api/content/generate', async (req, res) => {
+  const { sessionId, type } = req.body || {};
+  if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
+  if (type !== 'note' && type !== 'points') return res.status(400).json({ error: 'type must be note|points' });
+
+  const session = readSession(sessionId);
+  if (!session) return res.status(404).json({ error: 'session not found' });
+  if (!(session.transcript || '').trim()) {
+    return res.status(400).json({ error: 'session has no transcript' });
+  }
+
+  const url = ollamaUrl();
+  const model = ollamaModel();
+  const systemPrompt = type === 'note' ? NOTE_PROMPT : POINTS_PROMPT;
+
+  let raw;
+  try {
+    const r = await axios.post(url + '/api/chat', {
+      model,
+      stream: false,
+      format: 'json',
+      options: { temperature: 0.2, num_ctx: 8192 },
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user',   content: buildUserPayload(session) },
+      ],
+    }, { timeout: 180_000 });
+    raw = r.data?.message?.content || '';
+  } catch (e) {
+    const msg = e.response?.data?.error || e.code || e.message;
+    return res.status(502).json({ error: `Ollama request failed: ${msg}`, url, model });
+  }
+
+  let parsed;
+  try { parsed = JSON.parse(raw); }
+  catch { return res.status(502).json({ error: 'Model returned invalid JSON', raw: raw.slice(0, 500) }); }
+
+  const allowed = (session.verses || []).map(v => v.ref);
+  const cleaned = type === 'note' ? sanitizeNote(parsed, allowed) : sanitizePoints(parsed, allowed);
+  if (!cleaned) return res.status(502).json({ error: 'Model output failed validation' });
+
+  session.generated = session.generated || {};
+  session.generated[type] = { ...cleaned, generatedAt: new Date().toISOString(), model };
+  session.updatedAt = new Date().toISOString();
+  try { writeSession(session); }
+  catch (e) { return res.status(500).json({ error: e.message }); }
+
+  res.json({ ok: true, type, content: session.generated[type] });
+});
+
 // ── Shared transcript pipeline ───────────────────────────────────────────
 // Called by both the Deepgram WebSocket handler and the /api/stream-text
 // endpoint (browser Web Speech API path). Broadcasts the transcript to
@@ -1376,6 +1680,10 @@ async function stopDeepgram() {
     try { deepgramConnection.requestClose(); } catch {}
     deepgramConnection = null;
   }
+  // Defensive: the ws-close handler clears these too, but stopDeepgram() can
+  // be called from paths where the close event may not fire (or fires late).
+  if (deepgramKeepAliveTimer)  { clearInterval(deepgramKeepAliveTimer);  deepgramKeepAliveTimer  = null; }
+  if (deepgramSilenceWatchdog) { clearInterval(deepgramSilenceWatchdog); deepgramSilenceWatchdog = null; }
   connectionState = 'disconnected';
   broadcast({ type: 'connection-state', state: 'disconnected' });
 }
@@ -1983,6 +2291,8 @@ function gracefulShutdown(signal) {
     try { deepgramConnection.requestClose(); } catch {}
     deepgramConnection = null;
   }
+  if (deepgramKeepAliveTimer)  { clearInterval(deepgramKeepAliveTimer);  deepgramKeepAliveTimer  = null; }
+  if (deepgramSilenceWatchdog) { clearInterval(deepgramSilenceWatchdog); deepgramSilenceWatchdog = null; }
   if (detectionWorker) {
     try { detectionWorker.terminate(); } catch {}
   }

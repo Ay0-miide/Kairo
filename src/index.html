@@ -30,6 +30,15 @@
         <span id="elapsed-time" style="display:none;"></span>
 
         <div class="top-bar-right">
+            <button id="content-studio-btn" class="tb-studio-btn" title="Content Studio — generate sermon notes and points">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M4 4h12a3 3 0 0 1 3 3v13H7a3 3 0 0 1-3-3z"/>
+                    <line x1="8" y1="9"  x2="15" y2="9"/>
+                    <line x1="8" y1="13" x2="15" y2="13"/>
+                    <line x1="8" y1="17" x2="12" y2="17"/>
+                </svg>
+                <span>Content Studio</span>
+            </button>
             <button id="looks-btn" class="tb-studio-btn" title="Theme Studio — design your output display">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                     <circle cx="13.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="13.5" r="2.5"/><circle cx="8.5" cy="13.5" r="2.5"/>
@@ -356,6 +365,67 @@
         </div>
     </div>
 
+    <!-- ═══ CONTENT STUDIO MODAL ═══ -->
+    <div id="content-studio-modal" class="modal hidden">
+        <div class="modal-overlay"></div>
+        <div class="modal-content cs-modal">
+            <div class="modal-header">
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <h2>Content Studio</h2>
+                    <span style="font-size:10px;color:var(--text-3);font-weight:400;">Sermon notes & points · offline AI</span>
+                </div>
+                <button id="close-content-studio" class="modal-close-btn">
+                    <svg width="16" height="16" viewBox="0 0 16 16"><path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                </button>
+            </div>
+
+            <div class="cs-body">
+                <!-- LEFT: session library -->
+                <aside class="cs-sidebar">
+                    <div class="cs-sidebar-header">
+                        <span class="cs-section-label">Sessions</span>
+                        <button id="cs-save-current-btn" class="modal-btn primary" style="padding:5px 10px;font-size:10px;">+ Save current</button>
+                    </div>
+                    <div id="cs-llm-status" class="cs-llm-status">Checking offline model…</div>
+                    <div id="cs-session-list" class="cs-session-list"></div>
+                </aside>
+
+                <!-- RIGHT: detail / preview -->
+                <section class="cs-main">
+                    <div id="cs-empty-pane" class="cs-empty-pane">
+                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.3"><path d="M4 4h12a3 3 0 0 1 3 3v13H7a3 3 0 0 1-3-3z"/><line x1="8" y1="9"  x2="15" y2="9"/><line x1="8" y1="13" x2="15" y2="13"/></svg>
+                        <p>Select a session to view, generate, or export.</p>
+                        <p class="cs-hint">All processing stays on your machine. The model only reads the transcript and the verses you actually called during the sermon.</p>
+                    </div>
+                    <div id="cs-detail-pane" class="cs-detail-pane" style="display:none;">
+                        <header class="cs-detail-header">
+                            <div>
+                                <h3 id="cs-detail-title" class="cs-detail-title"></h3>
+                                <div id="cs-detail-meta" class="cs-detail-meta"></div>
+                            </div>
+                            <div class="cs-detail-actions">
+                                <button id="cs-delete-session-btn" class="modal-btn secondary" title="Delete session" style="color:var(--red);border-color:rgba(232,64,74,0.3);font-size:11px;">Delete</button>
+                            </div>
+                        </header>
+
+                        <nav class="cs-tabs">
+                            <button id="cs-tab-note"   class="cs-tab active">Sermon Note</button>
+                            <button id="cs-tab-points" class="cs-tab">Sermon Points</button>
+                            <button id="cs-tab-source" class="cs-tab">Source</button>
+                            <div class="cs-tab-spacer"></div>
+                            <button id="cs-export-pdf-btn" class="modal-btn secondary" style="font-size:11px;">Export PDF</button>
+                            <button id="cs-generate-btn"   class="modal-btn primary"   style="font-size:11px;">
+                                <span id="cs-generate-label">Generate</span>
+                            </button>
+                        </nav>
+
+                        <div id="cs-preview" class="cs-preview"></div>
+                    </div>
+                </section>
+            </div>
+        </div>
+    </div>
+
     <!-- Settings Modal (JS-compatible IDs) -->
     <div id="settings-modal" class="modal hidden">
         <div class="modal-overlay"></div>
@@ -432,6 +502,35 @@
                             <input type="checkbox" id="show-confidence-settings" checked>
                             Show confidence scores
                         </label>
+                    </div>
+                </div>
+
+                <!-- ── CONTENT STUDIO (offline LLM) ────────────────── -->
+                <div class="settings-section">
+                    <div class="settings-section-label">Content Studio</div>
+
+                    <!-- State-aware status panel — JS swaps content based on Ollama detection. -->
+                    <div id="ollama-status-panel" class="osp osp-loading">
+                        <div class="osp-row">
+                            <span class="osp-dot"></span>
+                            <span class="osp-title">Checking offline AI…</span>
+                        </div>
+                    </div>
+
+                    <div class="setting-group">
+                        <label class="setting-label">Ollama URL</label>
+                        <input type="text" id="ollama-url" class="setting-input" placeholder="http://localhost:11434">
+                    </div>
+
+                    <div class="setting-group">
+                        <label class="setting-label">Model</label>
+                        <div style="display:flex;gap:6px;align-items:center;">
+                            <select id="ollama-model" class="setting-input" style="flex:1;">
+                                <option value="">Loading…</option>
+                            </select>
+                            <button id="refresh-ollama-btn" class="modal-btn secondary" style="white-space:nowrap;font-size:11px;" title="Refresh">↻</button>
+                        </div>
+                        <p class="setting-hint" id="ollama-status-hint" style="font-size:11px;color:var(--text-3);">Recommended: <code>qwen2.5:7b-instruct</code>. Use the panel above to download it with one click.</p>
                     </div>
                 </div>
 

@@ -7,6 +7,14 @@ const SERVER = 'http://localhost:7777';
 const WS_URL = 'ws://localhost:7777';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
+// HTML escape for safe interpolation into innerHTML or attributes. Same map
+// in either context, so we don't keep two lookalike helpers.
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+
 // Strip KJV annotation markers: {note} {word: alt} [Header text]
 function cleanVerseText(text) {
   return (text || '')
@@ -43,6 +51,7 @@ let startTime      = null;
 let wordCount      = 0;
 let verseCount     = 0;
 let sessionVerses  = [];
+let sessionTranscriptParts = [];   // [{ time: HH:MM:SS, text }] — final fragments only
 let allConfidences = [];
 let rangeRefs      = new Set(); // references belonging to the active verse range
 
@@ -152,13 +161,15 @@ function connectWS() {
   };
 
   ws.onmessage = (ev) => {
-    try { const m = JSON.parse(ev.data); if (m.type !== 'transcript') console.log('[WS]', m.type, JSON.stringify(m).slice(0,150)); } catch {}
-
-    try { handleServerMessage(JSON.parse(ev.data)); } catch {}
+    let m;
+    try { m = JSON.parse(ev.data); } catch { return; }
+    try { handleServerMessage(m); } catch (err) { console.warn('[WS] handler error:', err); }
   };
 
   ws.onclose = () => {
     console.warn('[WS] Disconnected — reconnecting in 2s…');
+    // Drop any prior timer so back-to-back close events can't stack reconnects.
+    clearTimeout(wsReconnectTimer);
     wsReconnectTimer = setTimeout(connectWS, 2000);
   };
 
@@ -287,6 +298,8 @@ function handleTranscript(msg) {
     if (interimSpan) transcriptDiv.insertBefore(span, interimSpan);
     else transcriptDiv.appendChild(span);
     if (interimSpan) interimSpan.textContent = '';
+    // Capture for Content Studio — finals only, never interim drafts.
+    sessionTranscriptParts.push({ time: new Date().toLocaleTimeString(), text: msg.text });
     wordCount += msg.text.split(/\s+/).length;
     if (wordCountEl) wordCountEl.textContent = wordCount.toLocaleString();
     // Auto-scroll
@@ -751,6 +764,12 @@ listenBtn?.addEventListener('click', async () => {
 // (offline, on-device).
 async function startListening() {
   if (isListening) return;
+  // New session — reset accumulators so Content Studio doesn't bundle the
+  // previous sermon's transcript and verses into the next save. Counters and
+  // timers are reset in handleConnectionState when we actually connect.
+  sessionVerses = [];
+  sessionTranscriptParts = [];
+  allConfidences = [];
   const engine = (settings.speechEngine || 'deepgram').toLowerCase();
   // Map UI value 'browser' → server-side 'vosk' so the offline path is selected.
   const serverEngine = (engine === 'browser' || engine === 'offline') ? 'vosk' : 'deepgram';
@@ -928,6 +947,10 @@ async function loadSettings() {
     if (obsUrlInput && settings.obsUrl) obsUrlInput.value = settings.obsUrl;
     if (obsPasswordInput && settings.obsPassword) obsPasswordInput.value = settings.obsPassword;
     if (obsTextSourceInput && settings.obsTextSource) obsTextSourceInput.value = settings.obsTextSource;
+    const ollamaUrlInput   = document.getElementById('ollama-url');
+    const ollamaModelSel   = document.getElementById('ollama-model');
+    if (ollamaUrlInput) ollamaUrlInput.value = settings.ollamaUrl || 'http://localhost:11434';
+    populateOllamaModels(settings.ollamaModel || 'qwen2.5:7b-instruct');
     // Restore toggle-group state from persisted settings
     syncToggleGroup('speech-engine-toggle', 'engine', settings.speechEngine || 'deepgram');
     syncToggleGroup('audio-mode-toggle',    'mode',   settings.audioMode    || 'mic');
@@ -982,6 +1005,8 @@ async function saveCurrentSettings() {
     obsTextSource:       obsTextSourceInput?.value || 'Scripture',
     speechEngine:        readToggleGroup('speech-engine-toggle', 'engine') || settings.speechEngine || 'deepgram',
     audioMode:           readToggleGroup('audio-mode-toggle',    'mode')   || settings.audioMode    || 'mic',
+    ollamaUrl:           document.getElementById('ollama-url')?.value || 'http://localhost:11434',
+    ollamaModel:         document.getElementById('ollama-model')?.value || settings.ollamaModel || 'qwen2.5:7b-instruct',
   };
   await fetch(`${SERVER}/api/settings`, {
     method: 'POST',
@@ -996,6 +1021,217 @@ async function saveCurrentSettings() {
   toast('Settings saved', 'success');
   checkPP();
 }
+
+// Default recommended model — reflected in the status panel + first-run pulls.
+const DEFAULT_OLLAMA_MODEL = 'qwen2.5:7b-instruct';
+
+let activePullController = null; // AbortController for in-flight pull (so Cancel works)
+
+async function populateOllamaModels(preferred) {
+  const sel    = document.getElementById('ollama-model');
+  const hint   = document.getElementById('ollama-status-hint');
+  const panel  = document.getElementById('ollama-status-panel');
+  if (!sel || !panel) return;
+
+  let j = { ok: false };
+  try {
+    const r = await fetch(`${SERVER}/api/llm/status`);
+    j = await r.json();
+  } catch {}
+
+  // ── Populate dropdown ────────────────────────────────────────────────
+  sel.innerHTML = '';
+  const desired = preferred || j.configuredModel || DEFAULT_OLLAMA_MODEL;
+  const models  = j.ok ? (j.models || []) : [];
+  if (!j.ok) {
+    const opt = document.createElement('option');
+    opt.value = desired;
+    opt.textContent = 'Ollama not reachable';
+    sel.appendChild(opt);
+  } else if (!models.length) {
+    const opt = document.createElement('option');
+    opt.value = desired;
+    opt.textContent = desired + ' (not installed)';
+    sel.appendChild(opt);
+  } else {
+    for (const name of models) {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      if (name === desired) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    if (desired && !models.includes(desired)) {
+      const opt = document.createElement('option');
+      opt.value = desired;
+      opt.textContent = desired + ' (not installed)';
+      opt.selected = true;
+      sel.appendChild(opt);
+    }
+  }
+  if (hint) {
+    hint.textContent = j.ok && models.length
+      ? `${models.length} model${models.length === 1 ? '' : 's'} installed.`
+      : `Recommended: ${DEFAULT_OLLAMA_MODEL}. Click Download in the panel above.`;
+  }
+
+  // ── Status panel (state-aware) ───────────────────────────────────────
+  if (activePullController) return; // pull in progress — leave panel alone
+  renderOllamaStatusPanel(j, desired, models);
+}
+
+function renderOllamaStatusPanel(status, model, models) {
+  const panel = document.getElementById('ollama-status-panel');
+  if (!panel) return;
+
+  // State 1 — Ollama not running
+  if (!status.ok) {
+    panel.className = 'osp osp-err';
+    panel.innerHTML = `
+      <div class="osp-row">
+        <span class="osp-dot"></span>
+        <span class="osp-title">Ollama not running</span>
+      </div>
+      <p class="osp-msg">Install once — runs offline, no API key, no telemetry.</p>
+      <div class="osp-actions">
+        <a href="https://ollama.com/download" target="_blank" rel="noopener" class="osp-btn osp-btn-primary">Get Ollama →</a>
+        <button class="osp-btn osp-btn-ghost" id="osp-recheck-btn">Re-check</button>
+      </div>`;
+    panel.querySelector('#osp-recheck-btn')?.addEventListener('click', () => populateOllamaModels(model));
+    return;
+  }
+
+  // State 2 — Ollama running, model not installed
+  if (!models.includes(model)) {
+    const sizeHint = (model || '').includes('7b') ? '~4.5 GB' :
+                     (model || '').includes('3b') ? '~2 GB'   :
+                     (model || '').includes('13b')? '~7 GB'   : '';
+    panel.className = 'osp osp-warn';
+    panel.innerHTML = `
+      <div class="osp-row">
+        <span class="osp-dot"></span>
+        <span class="osp-title">Ollama ready, model not installed</span>
+      </div>
+      <p class="osp-msg"><code>${escapeHtml(model)}</code> ${sizeHint ? `· ${sizeHint}` : ''} · download takes a few minutes the first time.</p>
+      <div class="osp-actions">
+        <button class="osp-btn osp-btn-primary" id="osp-pull-btn">Download model</button>
+      </div>`;
+    panel.querySelector('#osp-pull-btn')?.addEventListener('click', () => pullModel(model));
+    return;
+  }
+
+  // State 3 — Ready
+  panel.className = 'osp osp-ok';
+  panel.innerHTML = `
+    <div class="osp-row">
+      <span class="osp-dot"></span>
+      <span class="osp-title">Ready · <strong>${escapeHtml(model)}</strong></span>
+    </div>
+    <p class="osp-msg">Offline AI is set up. Open Content Studio to generate notes.</p>`;
+}
+
+async function pullModel(modelName) {
+  const panel = document.getElementById('ollama-status-panel');
+  if (!panel) return;
+  if (activePullController) return; // already pulling
+
+  panel.className = 'osp osp-progress';
+  panel.innerHTML = `
+    <div class="osp-row">
+      <span class="osp-dot pulse"></span>
+      <span class="osp-title">Downloading <strong>${escapeHtml(modelName)}</strong></span>
+    </div>
+    <div class="osp-progress-status" id="osp-progress-status">Connecting to Ollama…</div>
+    <div class="osp-progress-bar"><div class="osp-progress-fill" id="osp-progress-fill" style="width:0%"></div></div>
+    <div class="osp-progress-meta" id="osp-progress-meta"></div>
+    <div class="osp-actions">
+      <button class="osp-btn osp-btn-ghost" id="osp-cancel-btn">Cancel</button>
+    </div>`;
+
+  const statusEl = panel.querySelector('#osp-progress-status');
+  const fillEl   = panel.querySelector('#osp-progress-fill');
+  const metaEl   = panel.querySelector('#osp-progress-meta');
+  const cancelBtn= panel.querySelector('#osp-cancel-btn');
+
+  activePullController = new AbortController();
+  cancelBtn.addEventListener('click', () => {
+    if (activePullController) activePullController.abort();
+  });
+
+  // Track totals across the pull so we can show overall progress.
+  // Ollama reports per-layer {digest, completed, total}; we track each digest.
+  const layers = new Map(); // digest -> { total, completed }
+
+  function fmtBytes(n) {
+    if (!n && n !== 0) return '';
+    if (n < 1024) return `${n} B`;
+    if (n < 1024**2) return `${(n/1024).toFixed(1)} KB`;
+    if (n < 1024**3) return `${(n/1024**2).toFixed(1)} MB`;
+    return `${(n/1024**3).toFixed(2)} GB`;
+  }
+
+  function applyProgress(msg) {
+    if (msg.error) { statusEl.textContent = 'Error: ' + msg.error; return; }
+    if (msg.status) statusEl.textContent = msg.status.charAt(0).toUpperCase() + msg.status.slice(1);
+    if (msg.digest && msg.total != null) {
+      layers.set(msg.digest, { total: msg.total, completed: msg.completed || 0 });
+    }
+    let totalAll = 0, doneAll = 0;
+    for (const { total, completed } of layers.values()) {
+      totalAll += total;
+      doneAll  += completed;
+    }
+    if (totalAll > 0) {
+      const pct = Math.min(99.9, (doneAll / totalAll) * 100);
+      fillEl.style.width = pct.toFixed(1) + '%';
+      metaEl.textContent = `${fmtBytes(doneAll)} / ${fmtBytes(totalAll)} · ${pct.toFixed(0)}%`;
+    }
+    if (msg.status === 'success') {
+      fillEl.style.width = '100%';
+      metaEl.textContent = 'Done';
+    }
+  }
+
+  try {
+    const r = await fetch(`${SERVER}/api/llm/pull`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: modelName }),
+      signal: activePullController.signal,
+    });
+    if (!r.ok || !r.body) throw new Error('stream failed');
+    const reader  = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try { applyProgress(JSON.parse(line)); } catch {}
+      }
+    }
+    activePullController = null;
+    toast('Model downloaded', 'success');
+    populateOllamaModels(modelName);
+  } catch (e) {
+    activePullController = null;
+    if (e.name === 'AbortError') {
+      toast('Download cancelled', 'info');
+    } else {
+      toast('Download failed: ' + e.message, 'error');
+    }
+    populateOllamaModels(modelName);
+  }
+}
+
+document.getElementById('refresh-ollama-btn')?.addEventListener('click', () => {
+  const sel = document.getElementById('ollama-model');
+  populateOllamaModels(sel?.value);
+});
 
 function updatePPTokenLabel() {
   if (!ppTokenOrderLabel) return;
@@ -2143,6 +2379,347 @@ applyLookBtn?.addEventListener('click', async () => {
     });
 
     document.getElementById('upd-snooze-btn').addEventListener('click', () => banner.remove());
+  }
+})();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CONTENT STUDIO — capture, save, generate, export
+// ═══════════════════════════════════════════════════════════════════════════
+(function () {
+  const openBtn       = document.getElementById('content-studio-btn');
+  const modal         = document.getElementById('content-studio-modal');
+  if (!openBtn || !modal) return;
+
+  const closeBtn      = modal.querySelector('#close-content-studio');
+  const sessionList   = modal.querySelector('#cs-session-list');
+  const saveCurrentBtn= modal.querySelector('#cs-save-current-btn');
+  const llmStatusEl   = modal.querySelector('#cs-llm-status');
+  const detailPane    = modal.querySelector('#cs-detail-pane');
+  const emptyPane     = modal.querySelector('#cs-empty-pane');
+
+  const detailTitleEl = modal.querySelector('#cs-detail-title');
+  const detailMetaEl  = modal.querySelector('#cs-detail-meta');
+  const tabNoteBtn    = modal.querySelector('#cs-tab-note');
+  const tabPointsBtn  = modal.querySelector('#cs-tab-points');
+  const tabSourceBtn  = modal.querySelector('#cs-tab-source');
+  const generateBtn   = modal.querySelector('#cs-generate-btn');
+  const exportBtn2    = modal.querySelector('#cs-export-pdf-btn');
+  const deleteBtn2    = modal.querySelector('#cs-delete-session-btn');
+  const previewWrap   = modal.querySelector('#cs-preview');
+  const generateLabel = modal.querySelector('#cs-generate-label');
+
+  let activeSessionId = null;
+  let activeSession   = null;
+  let activeTab       = 'note'; // 'note' | 'points' | 'source'
+
+  function snapshotCurrentSession() {
+    const transcript = sessionTranscriptParts.map(p => p.text).join(' ').replace(/\s+/g, ' ').trim();
+    const durationMin = startTime ? Math.max(1, Math.round((Date.now() - startTime) / 60000)) : 0;
+    const verses = sessionVerses.map(v => ({ ref: v.ref, text: cleanVerseText(v.text), time: v.time }));
+    return {
+      title: `Sermon — ${new Date().toLocaleString()}`,
+      date: new Date().toISOString().slice(0, 10),
+      durationMin,
+      transcript,
+      transcriptParts: sessionTranscriptParts.slice(),
+      verses,
+    };
+  }
+
+  async function fetchSessions() {
+    try {
+      const r = await fetch(`${SERVER}/api/sessions`);
+      const j = await r.json();
+      return j.sessions || [];
+    } catch { return []; }
+  }
+
+  async function fetchLLMStatus() {
+    try {
+      const r = await fetch(`${SERVER}/api/llm/status`);
+      return await r.json();
+    } catch { return { ok: false, error: 'unreachable' }; }
+  }
+
+  function renderLLMStatus(s) {
+    if (!llmStatusEl) return;
+    if (s.ok) {
+      const has = s.models?.includes(s.configuredModel);
+      llmStatusEl.innerHTML = has
+        ? `<span class="cs-pill cs-pill-ok">●</span> Ollama ready · <strong>${s.configuredModel}</strong>`
+        : `<span class="cs-pill cs-pill-warn">●</span> Ollama running, but <strong>${s.configuredModel}</strong> not installed. Run <code>ollama pull ${s.configuredModel}</code>`;
+    } else {
+      llmStatusEl.innerHTML = `<span class="cs-pill cs-pill-err">●</span> Ollama not reachable at ${s.url || 'localhost:11434'} — install from <a href="https://ollama.com" target="_blank" rel="noopener">ollama.com</a>`;
+    }
+  }
+
+  function renderSessionList(items) {
+    if (!sessionList) return;
+    if (!items.length) {
+      sessionList.innerHTML = `<div class="cs-empty-list">No saved sessions yet. Click <strong>Save current session</strong> while listening.</div>`;
+      return;
+    }
+    sessionList.innerHTML = '';
+    for (const s of items) {
+      const row = document.createElement('div');
+      row.className = 'cs-session-row' + (s.id === activeSessionId ? ' active' : '');
+      row.dataset.id = s.id;
+      row.innerHTML = `
+        <div class="cs-session-row-main">
+          <div class="cs-session-row-title">${escapeHtml(s.title)}</div>
+          <div class="cs-session-row-meta">${s.date || ''} · ${s.verseCount} verses · ${s.wordCount.toLocaleString()} words</div>
+        </div>
+        <div class="cs-session-row-tags">
+          ${s.hasNote ? '<span class="cs-tag">Note</span>' : ''}
+          ${s.hasPoints ? '<span class="cs-tag">Points</span>' : ''}
+        </div>`;
+      row.addEventListener('click', () => loadSessionIntoDetail(s.id));
+      sessionList.appendChild(row);
+    }
+  }
+
+  async function refreshList() {
+    const [items, status] = await Promise.all([fetchSessions(), fetchLLMStatus()]);
+    renderLLMStatus(status);
+    renderSessionList(items);
+  }
+
+  async function loadSessionIntoDetail(id) {
+    try {
+      const r = await fetch(`${SERVER}/api/sessions/${encodeURIComponent(id)}`);
+      if (!r.ok) throw new Error('not found');
+      activeSession = await r.json();
+      activeSessionId = id;
+    } catch { toast('Failed to load session', 'error'); return; }
+
+    detailPane.style.display = '';
+    emptyPane.style.display  = 'none';
+    detailTitleEl.textContent = activeSession.title || activeSession.id;
+    detailMetaEl.textContent  =
+      `${activeSession.date || ''}  ·  ${activeSession.durationMin || 0} min  ·  ` +
+      `${(activeSession.verses || []).length} verses  ·  ` +
+      `${(activeSession.transcript || '').split(/\s+/).filter(Boolean).length.toLocaleString()} words`;
+
+    sessionList.querySelectorAll('.cs-session-row').forEach(r => {
+      r.classList.toggle('active', r.dataset.id === id);
+    });
+    setTab(activeTab);
+  }
+
+  function setTab(tab) {
+    activeTab = tab;
+    [tabNoteBtn, tabPointsBtn, tabSourceBtn].forEach(b => b?.classList.remove('active'));
+    ({ note: tabNoteBtn, points: tabPointsBtn, source: tabSourceBtn })[tab]?.classList.add('active');
+
+    if (tab === 'source') {
+      generateBtn.style.display = 'none';
+      exportBtn2.style.display  = 'none';
+      generateLabel.textContent = '';
+    } else {
+      generateBtn.style.display = '';
+      const has = !!(activeSession?.generated?.[tab]);
+      generateLabel.textContent = has ? 'Regenerate' : 'Generate';
+      exportBtn2.style.display = has ? '' : 'none';
+    }
+    renderPreview();
+  }
+
+  function renderPreview() {
+    if (!activeSession) { previewWrap.innerHTML = ''; return; }
+    if (activeTab === 'source') {
+      previewWrap.innerHTML = renderSourceHTML(activeSession);
+      return;
+    }
+    const content = activeSession.generated?.[activeTab];
+    if (!content) {
+      previewWrap.innerHTML = `<div class="cs-preview-empty">
+        <p>No ${activeTab === 'note' ? 'sermon note' : 'sermon points'} generated yet.</p>
+        <p class="cs-hint">Click <strong>Generate</strong> — the local model reads the transcript and produces a structured output. Nothing leaves your machine.</p>
+      </div>`;
+      return;
+    }
+    previewWrap.innerHTML = activeTab === 'note'
+      ? renderNoteHTML(activeSession, content)
+      : renderPointsHTML(activeSession, content);
+  }
+
+  function renderSourceHTML(s) {
+    const verses = (s.verses || []).map(v =>
+      `<li><strong>${escapeHtml(v.ref)}</strong> <span class="cs-source-time">${escapeHtml(v.time || '')}</span><br>${escapeHtml(v.text || '')}</li>`
+    ).join('') || '<li class="cs-source-empty">No verses recorded.</li>';
+    const transcript = escapeHtml(s.transcript || '').replace(/\n/g, '<br>') || '<em>No transcript captured.</em>';
+    return `
+      <section class="cs-doc">
+        <h2 class="cs-h2">Verses cited</h2>
+        <ul class="cs-verse-list">${verses}</ul>
+        <h2 class="cs-h2">Transcript</h2>
+        <p class="cs-transcript">${transcript}</p>
+      </section>`;
+  }
+
+  function renderNoteHTML(s, n) {
+    const sections = (n.sections || []).map(sec => `
+      <section class="cs-section">
+        <h3 class="cs-h3">${escapeHtml(sec.heading)}</h3>
+        ${sec.scriptures?.length ? `<div class="cs-scripture-row">${sec.scriptures.map(r => `<span class="cs-scripture-chip">${escapeHtml(r)}</span>`).join('')}</div>` : ''}
+        <p class="cs-body">${escapeHtml(sec.body)}</p>
+      </section>`).join('') || '<p class="cs-preview-empty">Model returned no sections.</p>';
+    return `
+      <article class="cs-doc">
+        <header class="cs-doc-header">
+          <h1 class="cs-h1">${escapeHtml(n.title || s.title)}</h1>
+          <div class="cs-doc-meta">${escapeHtml(s.date || '')} · ${s.durationMin || 0} min</div>
+          ${n.summary ? `<p class="cs-summary">${escapeHtml(n.summary)}</p>` : ''}
+        </header>
+        ${sections}
+        ${n.closing ? `<footer class="cs-closing"><h3 class="cs-h3">Closing</h3><p class="cs-body">${escapeHtml(n.closing)}</p></footer>` : ''}
+      </article>`;
+  }
+
+  function renderPointsHTML(s, p) {
+    const items = (p.points || []).map((it, i) => `
+      <li class="cs-point">
+        <div class="cs-point-num">${i + 1}</div>
+        <div class="cs-point-body">
+          <div class="cs-point-title">${escapeHtml(it.point)}</div>
+          ${it.scripture ? `<div class="cs-point-scripture">${escapeHtml(it.scripture)}</div>` : ''}
+          <p class="cs-body">${escapeHtml(it.explanation)}</p>
+          ${it.supportingQuote ? `<blockquote class="cs-quote">“${escapeHtml(it.supportingQuote)}”</blockquote>` : ''}
+        </div>
+      </li>`).join('') || '<p class="cs-preview-empty">Model returned no points.</p>';
+    return `
+      <article class="cs-doc">
+        <header class="cs-doc-header">
+          <h1 class="cs-h1">${escapeHtml(p.title || s.title)}</h1>
+          <div class="cs-doc-meta">${escapeHtml(s.date || '')} · ${s.durationMin || 0} min</div>
+          ${p.mainTheme ? `<p class="cs-summary"><strong>Theme — </strong>${escapeHtml(p.mainTheme)}</p>` : ''}
+        </header>
+        <ol class="cs-points">${items}</ol>
+      </article>`;
+  }
+
+  // ── Actions ──────────────────────────────────────────────────────────────
+  saveCurrentBtn?.addEventListener('click', async () => {
+    const snap = snapshotCurrentSession();
+    if (!snap.transcript && !snap.verses.length) {
+      toast('Nothing to save — start a session first', 'info');
+      return;
+    }
+    saveCurrentBtn.disabled = true;
+    try {
+      const r = await fetch(`${SERVER}/api/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(snap),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'save failed');
+      toast('Session saved', 'success');
+      await refreshList();
+      loadSessionIntoDetail(j.id);
+    } catch (e) {
+      toast('Save failed: ' + e.message, 'error');
+    } finally {
+      saveCurrentBtn.disabled = false;
+    }
+  });
+
+  generateBtn?.addEventListener('click', async () => {
+    if (!activeSessionId || activeTab === 'source') return;
+    generateBtn.disabled = true;
+    const orig = generateLabel.textContent;
+    generateLabel.textContent = 'Generating…';
+    previewWrap.classList.add('cs-loading');
+    try {
+      const r = await fetch(`${SERVER}/api/content/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: activeSessionId, type: activeTab }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'generate failed');
+      activeSession.generated = activeSession.generated || {};
+      activeSession.generated[activeTab] = j.content;
+      setTab(activeTab);
+      refreshList();
+    } catch (e) {
+      toast('Generation failed: ' + e.message, 'error');
+      generateLabel.textContent = orig;
+    } finally {
+      previewWrap.classList.remove('cs-loading');
+      generateBtn.disabled = false;
+    }
+  });
+
+  exportBtn2?.addEventListener('click', () => {
+    if (!activeSession || activeTab === 'source') return;
+    const content = activeSession.generated?.[activeTab];
+    if (!content) return;
+    const html = activeTab === 'note'
+      ? renderNoteHTML(activeSession, content)
+      : renderPointsHTML(activeSession, content);
+    openPrintWindow(html, activeSession.title || activeSession.id);
+  });
+
+  deleteBtn2?.addEventListener('click', async () => {
+    if (!activeSessionId) return;
+    if (!confirm('Delete this session? This cannot be undone.')) return;
+    try {
+      await fetch(`${SERVER}/api/sessions/${encodeURIComponent(activeSessionId)}`, { method: 'DELETE' });
+      activeSessionId = null;
+      activeSession = null;
+      detailPane.style.display = 'none';
+      emptyPane.style.display  = '';
+      refreshList();
+    } catch (e) { toast('Delete failed: ' + e.message, 'error'); }
+  });
+
+  tabNoteBtn  ?.addEventListener('click', () => setTab('note'));
+  tabPointsBtn?.addEventListener('click', () => setTab('points'));
+  tabSourceBtn?.addEventListener('click', () => setTab('source'));
+
+  openBtn.addEventListener('click', () => {
+    modal.classList.remove('hidden');
+    refreshList();
+  });
+  closeBtn?.addEventListener('click', () => modal.classList.add('hidden'));
+  modal.querySelector('.modal-overlay')?.addEventListener('click', () => modal.classList.add('hidden'));
+
+  // ── Print → Save as PDF ─────────────────────────────────────────────────
+  function openPrintWindow(bodyHTML, title) {
+    const w = window.open('', '_blank', 'width=900,height=1100');
+    if (!w) { toast('Pop-up blocked — allow pop-ups to export PDF', 'error'); return; }
+    w.document.write(`<!doctype html>
+<html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  @page { size: A4; margin: 22mm 20mm; }
+  * { box-sizing: border-box; }
+  body { font-family: 'Manrope', -apple-system, sans-serif; color: #111; background: #fff; line-height: 1.55; font-size: 11.5pt; }
+  .cs-doc { max-width: 720px; margin: 0 auto; }
+  .cs-doc-header { border-bottom: 1.5px solid #111; padding-bottom: 10px; margin-bottom: 18px; }
+  .cs-h1 { font-size: 22pt; font-weight: 800; letter-spacing: -0.01em; margin: 0 0 4px; }
+  .cs-doc-meta { font-size: 9.5pt; color: #666; text-transform: uppercase; letter-spacing: 1px; }
+  .cs-summary { margin-top: 10px; font-style: italic; color: #333; }
+  .cs-section { margin-bottom: 16px; page-break-inside: avoid; }
+  .cs-h2 { font-size: 13pt; font-weight: 700; margin: 18px 0 8px; }
+  .cs-h3 { font-size: 12pt; font-weight: 700; margin: 0 0 6px; }
+  .cs-body { margin: 0 0 6px; }
+  .cs-scripture-row { margin: 4px 0 8px; }
+  .cs-scripture-chip { display: inline-block; font-size: 9.5pt; font-weight: 600; background: #f4f4f4; border: 1px solid #ddd; border-radius: 3px; padding: 2px 8px; margin-right: 6px; }
+  .cs-points { list-style: none; padding: 0; margin: 0; counter-reset: pt; }
+  .cs-point { display: flex; gap: 14px; margin-bottom: 16px; page-break-inside: avoid; }
+  .cs-point-num { flex: 0 0 28px; font-size: 14pt; font-weight: 800; color: #999; }
+  .cs-point-body { flex: 1; }
+  .cs-point-title { font-size: 12.5pt; font-weight: 700; margin-bottom: 2px; }
+  .cs-point-scripture { font-size: 9.5pt; font-weight: 600; color: #555; margin-bottom: 6px; }
+  .cs-quote { border-left: 3px solid #ccc; padding: 4px 12px; margin: 8px 0; color: #555; font-style: italic; font-size: 10.5pt; }
+  .cs-closing { margin-top: 18px; padding-top: 12px; border-top: 1px solid #ddd; }
+  @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+</style></head><body>${bodyHTML}
+<script>window.onload = function(){ setTimeout(function(){ window.print(); }, 200); };</script>
+</body></html>`);
+    w.document.close();
   }
 })();
 
