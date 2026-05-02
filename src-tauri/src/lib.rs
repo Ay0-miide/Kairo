@@ -4,6 +4,8 @@
 // Production: uses the node binary bundled via externalBin.
 
 mod ndi;
+#[cfg(target_os = "macos")]
+mod syphon;
 
 use std::process::{Child, Command};
 use std::sync::{Arc, Mutex};
@@ -26,6 +28,9 @@ fn splash_data_url() -> String {
 }
 
 struct ServerProcess(Arc<Mutex<Option<Child>>>);
+
+#[cfg(target_os = "macos")]
+struct SyphonState(Arc<Mutex<syphon::SyphonHandle>>);
 
 /// Shared NDI sender state. The frontend manipulates this through the
 /// ndi_* Tauri commands; the actual sender thread runs inside the ndi module.
@@ -217,15 +222,70 @@ fn ndi_update(app: AppHandle, verse: String, reference: String) -> Result<(), St
     Ok(())
 }
 
+// ── Syphon commands (macOS only) ──────────────────────────────────────────
+// Syphon.framework is bundled with the app, so unlike NDI there's no SDK to
+// install. The framework requires a CGL context — the syphon module handles
+// that internally.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn syphon_available() -> bool {
+    syphon::is_syphon_available()
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn syphon_start(app: AppHandle, source_name: String) -> Result<(), String> {
+    let state = app.state::<SyphonState>();
+    syphon::start(&source_name, state.0.clone())
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn syphon_stop(app: AppHandle) -> Result<(), String> {
+    let state = app.state::<SyphonState>();
+    syphon::stop(state.0.clone())
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn syphon_update(app: AppHandle, verse: String, reference: String) -> Result<(), String> {
+    let state = app.state::<SyphonState>();
+    syphon::update(&verse, &reference, state.0.clone())
+}
+
+// Stubs for non-macOS platforms — frontend calls these unconditionally and
+// expects a clean `false` / no-op rather than an "unknown command" error.
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn syphon_available() -> bool { false }
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn syphon_start(_source_name: String) -> Result<(), String> {
+    Err("Syphon is macOS-only".into())
+}
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn syphon_stop() -> Result<(), String> { Ok(()) }
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn syphon_update(_verse: String, _reference: String) -> Result<(), String> { Ok(()) }
+
 // ── App entry ─────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(ServerProcess(Arc::new(Mutex::new(None))))
-        .manage(NdiState(Arc::new(Mutex::new(ndi::NdiHandle::default()))))
+        .manage(NdiState(Arc::new(Mutex::new(ndi::NdiHandle::default()))));
+
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder.manage(SyphonState(Arc::new(Mutex::new(syphon::SyphonHandle::default()))));
+    }
+
+    builder
         .invoke_handler(tauri::generate_handler![
             get_server_port,
             install_update,
@@ -233,6 +293,10 @@ pub fn run() {
             ndi_start,
             ndi_stop,
             ndi_update,
+            syphon_available,
+            syphon_start,
+            syphon_stop,
+            syphon_update,
         ])
         .setup(|app| {
             let handle = app.handle().clone();

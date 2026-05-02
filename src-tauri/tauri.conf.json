@@ -65,7 +65,10 @@
       "minimumSystemVersion": "12.0",
       "entitlements": "entitlements.plist",
       "exceptionDomain": "",
-      "signingIdentity": null
+      "signingIdentity": null,
+      "frameworks": [
+        "Frameworks/Syphon.framework"
+      ]
     },
     "windows": {
       "digestAlgorithm": "sha256",

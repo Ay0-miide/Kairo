@@ -94,25 +94,25 @@ const previewVerseRef    = document.getElementById('preview-verse-ref');
   if (!tauriInvoke || !previewVerseText) return;
   let scheduled = false;
   let lastSent = '';
-  function pushToNdi() {
+  function pushToOutputs() {
     scheduled = false;
     const verse = (previewVerseText.textContent || '').trim();
     const ref   = (previewVerseRef?.textContent || '').trim();
-    if (!verse || verse === 'Nothing on display') {
-      if (lastSent === '') return;
-      lastSent = '';
-      tauriInvoke('ndi_update', { verse: '', reference: '' }).catch(() => {});
-      return;
-    }
-    const sig = ref + '' + verse;
+    const blank = !verse || verse === 'Nothing on display';
+    const sig   = blank ? '' : (ref + '' + verse);
     if (sig === lastSent) return;
     lastSent = sig;
-    tauriInvoke('ndi_update', { verse, reference: ref }).catch(() => {});
+    const v = blank ? '' : verse;
+    const r = blank ? '' : ref;
+    // Each output's _update is a no-op if that output isn't running, so we
+    // can fire unconditionally to both NDI and Syphon without checking state.
+    tauriInvoke('ndi_update',    { verse: v, reference: r }).catch(() => {});
+    tauriInvoke('syphon_update', { verse: v, reference: r }).catch(() => {});
   }
   function schedule() {
     if (scheduled) return;
     scheduled = true;
-    requestAnimationFrame(pushToNdi);
+    requestAnimationFrame(pushToOutputs);
   }
   new MutationObserver(schedule).observe(previewVerseText, { characterData: true, childList: true, subtree: true });
   if (previewVerseRef) {
@@ -2679,6 +2679,9 @@ applyLookBtn?.addEventListener('click', async () => {
   tabSourceBtn?.addEventListener('click', () => setTab('source'));
 
   openBtn.addEventListener('click', () => {
+    // Close Settings first — the launcher lives inside it now, and stacking
+    // two modals leaves the dimmed Settings overlay behind Content Studio.
+    document.getElementById('settings-modal')?.classList.add('hidden');
     modal.classList.remove('hidden');
     refreshList();
   });

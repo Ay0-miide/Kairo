@@ -30,15 +30,6 @@
         <span id="elapsed-time" style="display:none;"></span>
 
         <div class="top-bar-right">
-            <button id="content-studio-btn" class="tb-studio-btn" title="Content Studio — generate sermon notes and points">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M4 4h12a3 3 0 0 1 3 3v13H7a3 3 0 0 1-3-3z"/>
-                    <line x1="8" y1="9"  x2="15" y2="9"/>
-                    <line x1="8" y1="13" x2="15" y2="13"/>
-                    <line x1="8" y1="17" x2="12" y2="17"/>
-                </svg>
-                <span>Content Studio</span>
-            </button>
             <button id="looks-btn" class="tb-studio-btn" title="Theme Studio — design your output display">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                     <circle cx="13.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="13.5" r="2.5"/><circle cx="8.5" cy="13.5" r="2.5"/>
@@ -509,6 +500,17 @@
                 <div class="settings-section">
                     <div class="settings-section-label">Content Studio</div>
 
+                    <!-- Launcher — opens the full Content Studio modal. -->
+                    <button id="content-studio-btn" class="modal-btn primary" style="width:100%;justify-content:center;margin-bottom:12px;gap:8px;">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M4 4h12a3 3 0 0 1 3 3v13H7a3 3 0 0 1-3-3z"/>
+                            <line x1="8" y1="9"  x2="15" y2="9"/>
+                            <line x1="8" y1="13" x2="15" y2="13"/>
+                            <line x1="8" y1="17" x2="12" y2="17"/>
+                        </svg>
+                        Open Content Studio
+                    </button>
+
                     <!-- State-aware status panel — JS swaps content based on Ollama detection. -->
                     <div id="ollama-status-panel" class="osp osp-loading">
                         <div class="osp-row">
@@ -617,25 +619,13 @@
                                     <input type="text" id="syphon-source-name" class="setting-input" value="KAIRO Scripture" style="flex:1;">
                                     <button id="test-syphon-btn" class="modal-btn secondary" style="white-space:nowrap;">Test</button>
                                 </div>
-                                <div style="font-size:11px;color:var(--text-3);margin-top:4px;">Look for this name in your Syphon-compatible app (OBS, Resolume, MadMapper).</div>
+                                <div style="font-size:11px;color:var(--text-3);margin-top:4px;">This name appears on the Syphon network for any compatible app (ProPresenter, OBS Syphon plugin, Resolume, MadMapper).</div>
                             </div>
-                            <div class="setting-group">
-                                <label class="setting-label">Layout</label>
-                                <div class="toggle-group" id="syphon-layout-toggle">
-                                    <button class="toggle-btn active" data-layout="fullscreen">Fullscreen</button>
-                                    <button class="toggle-btn" data-layout="lower-third">Lower Third</button>
-                                </div>
+                            <div style="display:flex;align-items:center;gap:8px;margin:14px 0 6px 0;">
+                                <span id="syphon-status" style="font-size:11px;color:var(--text-3);">Checking Syphon framework…</span>
                             </div>
-                            <div class="setting-group" id="syphon-opacity-group" style="display:none;">
-                                <label class="setting-label">Background Opacity</label>
-                                <div style="display:flex;align-items:center;gap:10px;">
-                                    <input type="range" id="syphon-bg-opacity" min="0" max="100" value="80" style="flex:1;">
-                                    <span id="syphon-opacity-label" style="font-size:11px;color:var(--text-2);min-width:30px;">80%</span>
-                                </div>
-                            </div>
-                            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-                                <button id="open-syphon-btn" class="modal-btn secondary" style="flex:1;justify-content:center;">Open Syphon Window</button>
-                                <span id="syphon-status" style="font-size:11px;color:var(--text-2);"></span>
+                            <div id="syphon-active-hint" style="display:none;font-size:11px;color:var(--text-3);line-height:1.55;padding:10px 12px;background:rgba(77,182,172,0.06);border-left:2px solid #4db6ac;border-radius:4px;">
+                                Broadcasting at <strong style="color:var(--text);">1280×720</strong>. Detected verses render directly into the Syphon frame in real time — no capture window required.
                             </div>
                         </div>
                     </div>
@@ -773,8 +763,10 @@
             });
         });
 
-        // Layout toggles — show/hide opacity slider for lower-third
-        ['syphon', 'external'].forEach(function(prefix) {
+        // Layout toggles — show/hide opacity slider for lower-third.
+        // Syphon was removed from this list when we moved to the native
+        // sender (no window = no opacity slider needed).
+        ['external'].forEach(function(prefix) {
             var group = document.getElementById(prefix + '-layout-toggle');
             var opacityGroup = document.getElementById(prefix + '-opacity-group');
             if (group && opacityGroup) {
@@ -868,67 +860,118 @@
             }
         }
 
-        // Syphon: setup flow mirrors ProPresenter — open the window, then a
-        // Test button confirms it's broadcasting (i.e. window exists & visible).
-        var syphonStatusEl = document.getElementById('syphon-status');
-        function setSyphonStatus(text, kind) {
-            if (!syphonStatusEl) return;
-            syphonStatusEl.textContent = text;
-            syphonStatusEl.style.color =
-                kind === 'active' ? 'var(--green)' :
-                kind === 'error'  ? 'var(--red)'   : 'var(--text-3)';
-        }
-        async function isSyphonWindowOpen() {
-            if (!window.__TAURI__) return false;
-            try {
-                var WW = window.__TAURI__.webviewWindow.WebviewWindow;
-                var w  = await WW.getByLabel('kairo-syphon');
-                if (!w) return false;
-                // visible() can throw if window is gone; treat as not open
-                try { return await w.isVisible(); } catch (_) { return false; }
-            } catch (_) { return false; }
-        }
-        // Initial state
-        setSyphonStatus('Not broadcasting', 'idle');
-        isSyphonWindowOpen().then(function(open) {
-            setSyphonStatus(open ? '● Broadcasting' : 'Not broadcasting', open ? 'active' : 'idle');
-        });
+        // Syphon: NATIVE sender driven through Tauri commands defined in
+        // src-tauri/src/syphon.rs. Syphon.framework is bundled with the app,
+        // so unlike NDI there's no SDK to install. Frames are rendered in
+        // Rust and pushed directly to the Syphon network — no window required.
+        (function() {
+            var syphonStatusEl = document.getElementById('syphon-status');
+            var syphonToggle   = document.getElementById('syphon-enabled-toggle');
+            var syphonName     = document.getElementById('syphon-source-name');
+            var testSyphonBtn  = document.getElementById('test-syphon-btn');
+            var activeHint     = document.getElementById('syphon-active-hint');
+            var invokeFn = window.__TAURI__?.core?.invoke || window.__TAURI__?.invoke;
 
-        var openSyphonBtn = document.getElementById('open-syphon-btn');
-        function openSyphonWindow() {
-            var layout  = document.querySelector('#syphon-layout-toggle .toggle-btn.active')?.dataset.layout || 'fullscreen';
-            var opacity = document.getElementById('syphon-bg-opacity')?.value || '80';
-            var name    = document.getElementById('syphon-source-name')?.value || 'KAIRO Scripture';
-            var url = '/display.html?layout=' + layout + '&opacity=' + opacity + '&name=' + encodeURIComponent(name);
-            openDisplayWindow('kairo-syphon', url, { width: 1280, height: 720 });
-            setSyphonStatus('● Broadcasting', 'active');
-        }
-        if (openSyphonBtn) openSyphonBtn.addEventListener('click', openSyphonWindow);
+            function setSyphonStatus(text, kind) {
+                if (!syphonStatusEl) return;
+                syphonStatusEl.textContent = text;
+                syphonStatusEl.style.color =
+                    kind === 'active' ? 'var(--green)' :
+                    kind === 'error'  ? 'var(--red)'   :
+                    kind === 'warn'   ? '#fbbf24'      : 'var(--text-3)';
+            }
+            function showActiveHint(on) {
+                if (activeHint) activeHint.style.display = on ? '' : 'none';
+            }
 
-        // Test: same affordance ProPresenter has — confirms the output is live.
-        // If the window isn't open yet, open it; if it is, focus it.
-        var testSyphonBtn = document.getElementById('test-syphon-btn');
-        if (testSyphonBtn) {
-            testSyphonBtn.addEventListener('click', async function() {
-                testSyphonBtn.textContent = 'Testing…';
+            async function detectAvailability() {
+                if (!invokeFn) {
+                    // Plain browser dev-preview — no Tauri commands available.
+                    setSyphonStatus('Syphon not available (run inside the app)', 'warn');
+                    return false;
+                }
                 try {
-                    var alreadyOpen = await isSyphonWindowOpen();
-                    if (alreadyOpen) {
-                        // Focus the existing window
-                        var WW = window.__TAURI__?.webviewWindow.WebviewWindow;
-                        var w  = WW ? await WW.getByLabel('kairo-syphon') : null;
-                        if (w) { try { await w.show(); } catch(_){} try { await w.setFocus(); } catch(_){} }
-                        setSyphonStatus('● Broadcasting', 'active');
+                    var ok = await invokeFn('syphon_available');
+                    if (ok) {
+                        setSyphonStatus('Syphon framework loaded — ready', 'idle');
                     } else {
-                        openSyphonWindow();
+                        setSyphonStatus('Syphon framework missing', 'error');
+                        if (syphonToggle) { syphonToggle.checked = false; syphonToggle.disabled = true; }
+                    }
+                    return !!ok;
+                } catch (e) {
+                    setSyphonStatus('Syphon check failed: ' + e, 'error');
+                    return false;
+                }
+            }
+
+            async function startSyphon() {
+                if (!invokeFn) return;
+                var name = (syphonName?.value || 'KAIRO Scripture').trim() || 'KAIRO Scripture';
+                try {
+                    await invokeFn('syphon_start', { sourceName: name });
+                    setSyphonStatus('● Broadcasting "' + name + '"', 'active');
+                    showActiveHint(true);
+                    // Push the current preview text immediately so the Syphon source
+                    // doesn't show a blank frame until the next verse fires.
+                    var verse = document.getElementById('preview-verse-text')?.textContent || '';
+                    var ref   = document.getElementById('preview-verse-ref')?.textContent  || '';
+                    if (verse && verse !== 'Nothing on display') {
+                        invokeFn('syphon_update', { verse: verse, reference: ref }).catch(function(){});
                     }
                 } catch (e) {
-                    setSyphonStatus('Test failed', 'error');
-                } finally {
-                    testSyphonBtn.textContent = 'Test';
+                    setSyphonStatus('Failed: ' + e, 'error');
+                    if (syphonToggle) syphonToggle.checked = false;
                 }
-            });
-        }
+            }
+            async function stopSyphon() {
+                if (!invokeFn) return;
+                try { await invokeFn('syphon_stop'); } catch (_) {}
+                setSyphonStatus('Not broadcasting', 'idle');
+                showActiveHint(false);
+            }
+
+            if (syphonToggle) {
+                syphonToggle.addEventListener('change', function() {
+                    if (syphonToggle.checked) startSyphon();
+                    else                      stopSyphon();
+                });
+            }
+
+            // Test button: re-detect framework + (re)start if toggle is on.
+            if (testSyphonBtn) {
+                testSyphonBtn.addEventListener('click', async function() {
+                    testSyphonBtn.textContent = 'Testing…';
+                    if (syphonToggle) syphonToggle.disabled = false;
+                    try {
+                        var avail = await detectAvailability();
+                        if (avail && syphonToggle?.checked) {
+                            await startSyphon();
+                        } else if (avail) {
+                            setSyphonStatus('Syphon framework loaded — toggle on to broadcast', 'idle');
+                        }
+                    } finally {
+                        testSyphonBtn.textContent = 'Test';
+                    }
+                });
+            }
+
+            // Re-broadcast when the source name changes while broadcasting.
+            // SyphonServer's name is immutable per session, so we restart.
+            if (syphonName) {
+                var debounce = null;
+                syphonName.addEventListener('input', function() {
+                    if (!syphonToggle?.checked) return;
+                    clearTimeout(debounce);
+                    debounce = setTimeout(function() {
+                        stopSyphon().then(startSyphon);
+                    }, 600);
+                });
+            }
+
+            // Initial detection (slight delay so Tauri runtime is mounted).
+            setTimeout(detectAvailability, 250);
+        })();
 
         // NDI: NATIVE sender driven through Tauri commands defined in src-tauri.
         // Loads libndi at runtime from NDI Tools / NDI SDK install paths.

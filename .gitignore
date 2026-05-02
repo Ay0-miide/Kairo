@@ -33,3 +33,6 @@ logs/
 # Tauri updater signing key — NEVER commit the private key.
 # The public key (.pub) is safe to commit; it's already baked into tauri.conf.json.
 scripts/kairo-updater.key
+
+# Claude Code working dir (per-clone state, never shared)
+.claude/
