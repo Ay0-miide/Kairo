@@ -1404,18 +1404,111 @@ async function populateAudioDevices() {
 
 refreshDevicesBtn?.addEventListener('click', populateAudioDevices);
 
-// ── Export ─────────────────────────────────────────────────────────────────
-exportBtn?.addEventListener('click', exportSession);
-function exportSession() {
-  if (!sessionVerses.length) { toast('No verses to export', 'info'); return; }
-  const lines = sessionVerses.map(v => `${v.time}  ${v.ref}\n${v.text}\n`).join('\n');
-  const blob  = new Blob([lines], { type: 'text/plain' });
-  const url   = URL.createObjectURL(blob);
-  const a     = document.createElement('a');
-  a.href      = url;
-  a.download  = `KAIRO_session_${new Date().toISOString().slice(0, 10)}.txt`;
+// ── Top-bar download menu ──────────────────────────────────────────────────
+// One canonical place for all downloadable content: AI-generated sermon
+// note/points (PDF, opens print-window flow) and live-session transcript +
+// verse list (.txt). Each handler decides whether the requested artifact is
+// available right now and falls back to opening Content Studio if not.
+(function wireDownloadMenu() {
+  const menu = document.getElementById('download-menu');
+  if (!exportBtn || !menu) return;
+
+  function openMenu() {
+    menu.classList.remove('hidden');
+    exportBtn.setAttribute('aria-expanded', 'true');
+    // Defer outside-click binding by a tick so this same click doesn't close it.
+    setTimeout(() => document.addEventListener('click', outsideClickClose, { once: true }), 0);
+  }
+  function closeMenu() {
+    menu.classList.add('hidden');
+    exportBtn.setAttribute('aria-expanded', 'false');
+  }
+  function outsideClickClose(e) {
+    if (e.target.closest('#download-menu') || e.target.closest('#export-btn')) {
+      // Click was inside — re-arm the listener for the next outside click.
+      setTimeout(() => document.addEventListener('click', outsideClickClose, { once: true }), 0);
+      return;
+    }
+    closeMenu();
+  }
+
+  exportBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (menu.classList.contains('hidden')) openMenu();
+    else closeMenu();
+  });
+
+  menu.addEventListener('click', async (e) => {
+    const item = e.target.closest('.tb-menu-item');
+    if (!item) return;
+    closeMenu();
+    const kind = item.dataset.download;
+    try {
+      if      (kind === 'verses')      downloadVersesTxt();
+      else if (kind === 'transcript')  downloadTranscriptTxt();
+      else if (kind === 'note')        await downloadAIContent('note');
+      else if (kind === 'points')      await downloadAIContent('points');
+    } catch (err) {
+      toast('Download failed: ' + (err.message || err), 'error');
+    }
+  });
+})();
+
+function downloadAsFile(content, filename, mime = 'text/plain') {
+  const blob = new Blob([content], { type: mime });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+function downloadVersesTxt() {
+  if (!sessionVerses.length) { toast('No verses captured yet — start listening first', 'info'); return; }
+  const lines = sessionVerses.map(v => `${v.time}  ${v.ref}\n${v.text}\n`).join('\n');
+  downloadAsFile(lines, `KAIRO_verses_${new Date().toISOString().slice(0, 10)}.txt`);
+}
+
+function downloadTranscriptTxt() {
+  if (!sessionTranscriptParts.length) { toast('No transcript captured yet — start listening first', 'info'); return; }
+  const lines = sessionTranscriptParts.map(p => `[${p.time}] ${p.text}`).join('\n');
+  downloadAsFile(lines, `KAIRO_transcript_${new Date().toISOString().slice(0, 10)}.txt`);
+}
+
+// AI content lives on saved sessions. Resolve the most recent saved session
+// that has the requested type generated; if none, send the user into Content
+// Studio so they can generate one.
+async function downloadAIContent(type) {
+  let sessions = [];
+  try {
+    const r = await fetch(`${SERVER}/api/sessions`);
+    sessions = (await r.json()).sessions || [];
+  } catch {
+    toast('Could not reach Kairo server', 'error');
+    return;
+  }
+  const want = type === 'note' ? 'hasNote' : 'hasPoints';
+  const candidate = sessions.find(s => s[want]);
+  if (!candidate) {
+    toast(`No saved sermon ${type === 'note' ? 'note' : 'points'} yet — opening Content Studio`, 'info');
+    document.getElementById('settings-modal')?.classList.add('hidden');
+    document.getElementById('content-studio-modal')?.classList.remove('hidden');
+    document.getElementById('content-studio-btn')?.click();
+    return;
+  }
+  const r = await fetch(`${SERVER}/api/sessions/${encodeURIComponent(candidate.id)}`);
+  if (!r.ok) throw new Error('failed to load session');
+  const session = await r.json();
+  const content = session.generated?.[type];
+  if (!content) throw new Error('content missing on session');
+  // Use the existing render+print pipeline by dispatching a synthetic open
+  // through Content Studio's renderers. We import them via a small bridge.
+  if (typeof window.__cs_exportToPDF === 'function') {
+    window.__cs_exportToPDF(session, type, content);
+  } else {
+    toast('Content Studio not ready', 'error');
+  }
 }
 
 // ── Elapsed timer ──────────────────────────────────────────────────────────
@@ -2403,7 +2496,7 @@ applyLookBtn?.addEventListener('click', async () => {
   const tabPointsBtn  = modal.querySelector('#cs-tab-points');
   const tabSourceBtn  = modal.querySelector('#cs-tab-source');
   const generateBtn   = modal.querySelector('#cs-generate-btn');
-  const exportBtn2    = modal.querySelector('#cs-export-pdf-btn');
+  // exportBtn2 removed — top-bar download menu handles all exports now.
   const deleteBtn2    = modal.querySelector('#cs-delete-session-btn');
   const previewWrap   = modal.querySelector('#cs-preview');
   const generateLabel = modal.querySelector('#cs-generate-label');
@@ -2513,14 +2606,13 @@ applyLookBtn?.addEventListener('click', async () => {
 
     if (tab === 'source') {
       generateBtn.style.display = 'none';
-      exportBtn2.style.display  = 'none';
       generateLabel.textContent = '';
     } else {
       generateBtn.style.display = '';
       const has = !!(activeSession?.generated?.[tab]);
       generateLabel.textContent = has ? 'Regenerate' : 'Generate';
-      exportBtn2.style.display = has ? '' : 'none';
     }
+    // Export PDF lives on the top-bar download menu now; no per-tab toggle.
     renderPreview();
   }
 
@@ -2651,15 +2743,8 @@ applyLookBtn?.addEventListener('click', async () => {
     }
   });
 
-  exportBtn2?.addEventListener('click', () => {
-    if (!activeSession || activeTab === 'source') return;
-    const content = activeSession.generated?.[activeTab];
-    if (!content) return;
-    const html = activeTab === 'note'
-      ? renderNoteHTML(activeSession, content)
-      : renderPointsHTML(activeSession, content);
-    openPrintWindow(html, activeSession.title || activeSession.id);
-  });
+  // Old in-modal Export PDF button is hidden; downloads live on the top-bar
+  // menu now (window.__cs_exportToPDF reuses this module's render+print fns).
 
   deleteBtn2?.addEventListener('click', async () => {
     if (!activeSessionId) return;
@@ -2687,6 +2772,16 @@ applyLookBtn?.addEventListener('click', async () => {
   });
   closeBtn?.addEventListener('click', () => modal.classList.add('hidden'));
   modal.querySelector('.modal-overlay')?.addEventListener('click', () => modal.classList.add('hidden'));
+
+  // Bridge so the top-bar download menu can reuse this module's render+print
+  // pipeline without duplicating templates. Window-scoped because the IIFE
+  // closes over openPrintWindow / renderNoteHTML / renderPointsHTML.
+  window.__cs_exportToPDF = function (session, type, content) {
+    const html = type === 'note'
+      ? renderNoteHTML(session, content)
+      : renderPointsHTML(session, content);
+    openPrintWindow(html, session.title || session.id);
+  };
 
   // ── Print → Save as PDF ─────────────────────────────────────────────────
   function openPrintWindow(bodyHTML, title) {
