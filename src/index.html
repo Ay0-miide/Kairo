@@ -52,9 +52,32 @@
                 <span class="listen-text">Start Listening</span>
             </button>
             <div class="tb-divider"></div>
-            <button id="export-btn" class="tb-icon-btn" title="Export session">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            </button>
+            <div class="tb-download-wrap">
+                <button id="export-btn" class="tb-icon-btn" title="Download" aria-haspopup="menu" aria-expanded="false">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                </button>
+                <div id="download-menu" class="tb-menu hidden" role="menu">
+                    <div class="tb-menu-label">Sermon AI</div>
+                    <button class="tb-menu-item" data-download="note"   role="menuitem">
+                        <span class="tb-menu-item-name">Sermon Note</span>
+                        <span class="tb-menu-item-fmt">PDF</span>
+                    </button>
+                    <button class="tb-menu-item" data-download="points" role="menuitem">
+                        <span class="tb-menu-item-name">Sermon Points</span>
+                        <span class="tb-menu-item-fmt">PDF</span>
+                    </button>
+                    <div class="tb-menu-divider"></div>
+                    <div class="tb-menu-label">Live session</div>
+                    <button class="tb-menu-item" data-download="transcript" role="menuitem">
+                        <span class="tb-menu-item-name">Transcript</span>
+                        <span class="tb-menu-item-fmt">TXT</span>
+                    </button>
+                    <button class="tb-menu-item" data-download="verses"     role="menuitem">
+                        <span class="tb-menu-item-name">Verses</span>
+                        <span class="tb-menu-item-fmt">TXT</span>
+                    </button>
+                </div>
+            </div>
             <button id="settings-btn" class="tb-icon-btn" title="Settings">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
             </button>
@@ -404,7 +427,8 @@
                             <button id="cs-tab-points" class="cs-tab">Sermon Points</button>
                             <button id="cs-tab-source" class="cs-tab">Source</button>
                             <div class="cs-tab-spacer"></div>
-                            <button id="cs-export-pdf-btn" class="modal-btn secondary" style="font-size:11px;">Export PDF</button>
+                            <span class="cs-export-hint" title="Use the download icon in the top-bar to export as PDF.">↑ Download from the top bar</span>
+                            <button id="cs-export-pdf-btn" class="modal-btn secondary" style="display:none;" aria-hidden="true">Export PDF</button>
                             <button id="cs-generate-btn"   class="modal-btn primary"   style="font-size:11px;">
                                 <span id="cs-generate-label">Generate</span>
                             </button>
