@@ -21,6 +21,7 @@ serde_json = "1"
 reqwest = { version = "0.12", features = ["blocking"] }
 tokio = { version = "1", features = ["time"] }
 base64 = "0.22"
+getrandom = "0.2"
 
 # NDI native sender — links to libndi.dylib/dll/so at runtime via libloading.
 # We don't bundle the NDI SDK; KAIRO finds libndi on the user's system from
