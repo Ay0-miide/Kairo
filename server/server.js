@@ -93,9 +93,9 @@ const SETTINGS_PATH = process.env.KAIRO_APP_DATA_DIR
 function loadSettings() {
   try { return JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8')); } catch { return {}; }
 }
-function saveSettings(s) {
-  fs.mkdirSync(path.dirname(SETTINGS_PATH), { recursive: true });
-  fs.writeFileSync(SETTINGS_PATH, JSON.stringify(s, null, 2));
+async function saveSettings(s) {
+  await fs.promises.mkdir(path.dirname(SETTINGS_PATH), { recursive: true });
+  await fs.promises.writeFile(SETTINGS_PATH, JSON.stringify(s, null, 2));
 }
 let settings = loadSettings();
 
@@ -217,14 +217,17 @@ function spawnDetectionWorker() {
   });
 }
 
-function workerCall(type, payload, timeoutMs = 6000) {
+// suppressBroadcast: true for high-frequency ops (streamText) where timeouts
+// are expected when the host is under load (e.g. ProPresenter full-screen) and
+// broadcasting would spam the UI with transient noise.
+function workerCall(type, payload, timeoutMs = 6000, suppressBroadcast = false) {
   return new Promise((resolve, reject) => {
     if (!detectionWorker) return reject(new Error('Worker not started'));
     const id = ++workerMsgId;
     const timeout = setTimeout(() => {
       pendingCallbacks.delete(id);
       console.warn(`[Server] Worker timeout (${type}) after ${timeoutMs}ms`);
-      broadcast({ type: 'worker-timeout', op: type, timeoutMs });
+      if (!suppressBroadcast) broadcast({ type: 'worker-timeout', op: type, timeoutMs });
       reject(new Error(`Worker timeout: ${type}`));
     }, timeoutMs);
     pendingCallbacks.set(id, { resolve, reject, timeout });
@@ -583,7 +586,7 @@ function checkRangeAutoAdvance() {
   // How long this verse should take at the current pace.
   // In reading mode the pastor is reading scripture verbatim — tighten the
   // grace period so advances feel natural (8% vs 15% for conversational).
-  const graceMultiplier = readingModeActive ? 1.08 : 1.15;
+  const graceMultiplier = readingModeActive ? 1.05 : 1.15;
   const estimatedMs = (verseWordCount / wps) * 1000 * graceMultiplier;
   // Never advance in under 2s (reading mode) or 3s (normal) regardless of verse length
   const waitMs      = Math.max(readingModeActive ? 2000 : 3000, estimatedMs);
@@ -746,10 +749,10 @@ app.get('/api/settings', (_, res) => {
   res.json(safe);
 });
 
-app.post('/api/settings', (req, res) => {
+app.post('/api/settings', async (req, res) => {
   const current = loadSettings();
   const updated = { ...current, ...req.body };
-  saveSettings(updated);
+  await saveSettings(updated).catch(err => console.warn('[Settings] Save failed:', err.message));
   settings = updated;
   const obsChanged = req.body.obsEnabled !== undefined || req.body.obsUrl !== undefined || req.body.obsPassword !== undefined;
   if (obsChanged) connectOBS().catch(err => console.warn('[OBS] Reconnect-on-settings-change failed:', err.message));
@@ -959,11 +962,11 @@ function readSession(id) {
   if (!p || !fs.existsSync(p)) return null;
   try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return null; }
 }
-function writeSession(s) {
-  ensureSessionsDir();
+async function writeSession(s) {
+  await fs.promises.mkdir(SESSIONS_DIR, { recursive: true });
   const p = sessionPath(s.id);
   if (!p) throw new Error('invalid session id');
-  fs.writeFileSync(p, JSON.stringify(s, null, 2));
+  await fs.promises.writeFile(p, JSON.stringify(s, null, 2));
 }
 
 app.get('/api/sessions', (_req, res) => {
@@ -1303,6 +1306,27 @@ async function handleTranscriptSegment(transcript, isFinal, confidence, speechFi
 
   if (rangeQueue.length) checkRangeAutoAdvance();
 
+  // ── Last-2-words end-of-verse detection ──────────────────────────────────
+  // If a range is active, check whether this transcript contains the last two
+  // meaningful words of the currently-displayed verse. When matched the preacher
+  // has almost certainly finished reading it — advance immediately rather than
+  // waiting for the timing estimator.
+  if (rangeCurrentVerse && rangeQueue.length && !rangeAdvancing
+      && now - rangeLastAdvanceAt >= RANGE_ADVANCE_COOLDOWN_MS) {
+    const tail2 = getLastMeaningfulWords(
+      rangeCurrentVerse.text || rangeCurrentVerse.kjv_text || '', 2
+    );
+    if (tail2) {
+      const normT = transcript.toLowerCase().replace(RE_NONALPHA, ' ').replace(RE_WHITESPACE, ' ');
+      if (normT.includes(tail2)) {
+        rangeAdvancing     = true;
+        rangeLastAdvanceAt = now;
+        console.log(`[Range] Last-2-words advance: "${tail2}" detected`);
+        advanceRangeQueue().finally(() => { rangeAdvancing = false; });
+      }
+    }
+  }
+
   let foundRef = await processForReferences(transcript, true);
 
   if (!foundRef && referenceContext.isValid) {
@@ -1334,12 +1358,13 @@ async function handleTranscriptSegment(transcript, isFinal, confidence, speechFi
     transcriptBuffer[transcriptBuffer.length - 1].hasRef = !!foundRef;
   }
 
-  const sentenceFlushed = speechFinal
-    ? sentenceBuffer.forceFlush()
-    : sentenceBuffer.append(transcript);
-  const textForExpensive = sentenceFlushed || sentenceBuffer.checkTimeout();
-
-  if (workerBasicReady && textForExpensive) {
+  // During active scripture reading (range is on-screen) skip the sentence
+  // buffer entirely — run verbatim on every final segment so end-of-verse
+  // transitions feel immediate rather than waiting up to 4 s for punctuation.
+  let textForExpensive;
+  if (rangeCurrentVerse && workerBasicReady) {
+    sentenceBuffer.forceFlush();   // discard any partial accumulation
+    textForExpensive = transcript;
     const canFingerprint = now - lastFingerprintSearch > FINGERPRINT_INTERVAL_MS;
     lastFingerprintSearch = now;
     await Promise.all([
@@ -1348,10 +1373,26 @@ async function handleTranscriptSegment(transcript, isFinal, confidence, speechFi
         ? runFingerprintSearch(textForExpensive, true, !foundRef)
         : Promise.resolve(),
     ]);
-  } else if (workerBasicReady && !textForExpensive) {
-    const interimWords = transcript.split(/\s+/).filter(Boolean).length;
-    if (interimWords >= 8) {
-      processVerbatim(transcript).catch(err => console.warn('[Detection] processVerbatim failed:', err.message));
+  } else {
+    const sentenceFlushed = speechFinal
+      ? sentenceBuffer.forceFlush()
+      : sentenceBuffer.append(transcript);
+    textForExpensive = sentenceFlushed || sentenceBuffer.checkTimeout();
+
+    if (workerBasicReady && textForExpensive) {
+      const canFingerprint = now - lastFingerprintSearch > FINGERPRINT_INTERVAL_MS;
+      lastFingerprintSearch = now;
+      await Promise.all([
+        processVerbatim(textForExpensive),
+        canFingerprint
+          ? runFingerprintSearch(textForExpensive, true, !foundRef)
+          : Promise.resolve(),
+      ]);
+    } else if (workerBasicReady && !textForExpensive) {
+      const interimWords = transcript.split(/\s+/).filter(Boolean).length;
+      if (interimWords >= 8) {
+        processVerbatim(transcript).catch(err => console.warn('[Detection] processVerbatim failed:', err.message));
+      }
     }
   }
 
@@ -1562,14 +1603,18 @@ async function startDeepgram(config = {}) {
           try { deepgramConnection?.keepAlive?.(); } catch {}
         }, 8000);
 
-        // ── Silence watchdog every 30 s ──────────────────────────────────
-        // If we haven't received ANY transcript for 30 s while "connected",
+        // ── Silence watchdog every 60 s ──────────────────────────────────
+        // If we haven't received ANY transcript for 90 s while "connected",
         // the connection has silently stalled — force a reconnect.
+        // 90 s gives plenty of room for long prayers, congregational singing,
+        // and worship interludes without triggering a false reconnect.
+        // The keepAlive ping every 8 s keeps the socket warm during silence,
+        // so a 90 s transcript gap is a reliable indicator of a true stall.
         clearInterval(deepgramSilenceWatchdog);
         deepgramSilenceWatchdog = setInterval(() => {
           if (connectionState !== 'connected' || deepgramUserStopped) return;
           const silentMs = Date.now() - deepgramLastTranscriptAt;
-          if (silentMs > 30000) {
+          if (silentMs > 90000) {
             console.warn(`[Deepgram] No transcript for ${(silentMs/1000).toFixed(0)}s — reconnecting…`);
             clearInterval(deepgramKeepAliveTimer);
             clearInterval(deepgramSilenceWatchdog);
@@ -1579,7 +1624,7 @@ async function startDeepgram(config = {}) {
               console.error('[Deepgram] Silence-watchdog reconnect failed:', err.message)
             );
           }
-        }, 30000);
+        }, 60000);
 
         resolve({ ok: true });
       });
@@ -1718,7 +1763,7 @@ function tryRangeAdvanceByRef(verses) {
 async function processStreamText(text) {
   if (!workerBasicReady || !text) return;
   try {
-    const msg = await workerCall('streamText', { text }, 1500);
+    const msg = await workerCall('streamText', { text }, 2000, true);
     const results = msg.results || [];
     if (!results.length) return;
 
@@ -1908,8 +1953,8 @@ async function processVerbatim(transcript) {
     const msg     = await workerCall('verbatimSearchBatch', { texts, minWords: 6, limit: 3 }, 4000);
     const results = msg.results || [];
     if (!results.length) return false;
-    const viewer      = results.filter(r => r.similarity >= 0.90);
-    const suggestions = results.filter(r => r.similarity < 0.90);
+    const viewer      = results.filter(r => r.similarity >= 0.92);
+    const suggestions = results.filter(r => r.similarity < 0.92);
     if (viewer.length) {
       const top        = viewer[0];
       const vKey       = `${top.book}|${top.chapter}|${top.verse}`;
@@ -2025,7 +2070,7 @@ async function runFingerprintSearch(currentSegment, skipNewTranscriptCheck = fal
 
     if (!results.length || confidence === 'none') return;
 
-    if (allowViewer && (confidence === 'high' || confidence === 'medium') && !recentDirectRef) {
+    if (allowViewer && confidence === 'high' && !recentDirectRef) {
       const fpKey = `${results[0].book}|${results[0].chapter}|${results[0].verse}`;
       const boosted = ensembleScore(fpKey, 'fingerprint', results[0].similarity, results);
       broadcastDetection(results, 'fingerprint', boosted, 'viewer');
@@ -2256,8 +2301,8 @@ async function testProPresenterConnection() {
 // ── Start ─────────────────────────────────────────────────────────────────
 // Kill any stale process on PORT before binding — prevents EADDRINUSE on restart
 function startListening() {
-  server.listen(PORT, () => {
-    console.log(`[KAIRO] Server running at http://localhost:${PORT}`);
+  server.listen(PORT, '127.0.0.1', () => {
+    console.log(`[KAIRO] Server running at http://127.0.0.1:${PORT}`);
     spawnDetectionWorker();
   });
 }
