@@ -467,6 +467,19 @@
                         <p class="setting-hint" id="speech-engine-hint">Higher accuracy, requires an API key. 12,000 free minutes/month.</p>
                     </div>
 
+                    <!-- Offline model installer — shown only when "Offline" engine is selected -->
+                    <div class="setting-group" id="vosk-installer-group" style="display:none;">
+                        <label class="setting-label">Offline Model</label>
+                        <div id="vosk-status-line" style="font-size:12px;color:var(--text-3);margin-bottom:8px;">Checking…</div>
+                        <button id="vosk-install-btn" class="setting-input" style="cursor:pointer;display:none;">Download offline model (~40MB)</button>
+                        <div id="vosk-progress-wrap" style="display:none;margin-top:6px;">
+                            <div style="background:var(--surface-2);height:6px;border-radius:3px;overflow:hidden;">
+                                <div id="vosk-progress-bar" style="background:var(--accent);height:100%;width:0%;transition:width .2s;"></div>
+                            </div>
+                            <div id="vosk-progress-text" style="font-size:11px;color:var(--text-3);margin-top:4px;">Starting…</div>
+                        </div>
+                    </div>
+
                     <div class="setting-group" id="deepgram-key-group">
                         <label class="setting-label">Deepgram API Key</label>
                         <input type="password" id="deepgram-key" class="setting-input" placeholder="dg_...">

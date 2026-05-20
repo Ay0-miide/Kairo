@@ -173,6 +173,40 @@ setTimeout(() => {
   if (loadSettings().obsEnabled) connectOBS().catch(err => console.warn('[OBS] Initial connect failed:', err.message));
 }, 2000);
 
+// ── Passive reconnect loop ────────────────────────────────────────────────
+// If the operator launches Kairo before OBS, the initial connect fails and
+// would otherwise stay broken until they hit "Test" in Settings. Re-attempt
+// quietly every 20 s whenever OBS is enabled and not currently connected.
+// Doesn't log on every failure — that'd spam the console — but the UI sees
+// the eventual `connectOBS` success print and an `obs-status` broadcast.
+const OBS_RECONNECT_MS = 20_000;
+setInterval(() => {
+  const s = loadSettings();
+  if (!s.obsEnabled) return;
+  if (obsConnected) return;
+  connectOBS()
+    .then(() => { if (obsConnected) broadcast({ type: 'obs-status', connected: true }); })
+    .catch(() => {});   // expected during passive retry — don't log
+}, OBS_RECONNECT_MS);
+
+// ── ProPresenter health-check loop ────────────────────────────────────────
+// ProPresenter's API is stateless HTTP, so "reconnect" really means polling
+// /version and surfacing the live reachable/unreachable state to the UI.
+// Operators routinely launch Kairo first, then PP — this gives them an
+// immediate visual once PP comes up, without having to click "Test" again.
+let lastPpStatus = null;   // null | true | false — change-only broadcast
+const PP_HEALTH_MS = 30_000;
+setInterval(async () => {
+  const s = loadSettings();
+  if (s.proPresenterEnabled === false) return;
+  const r  = await testProPresenterConnection();
+  const ok = !!r.success;
+  if (ok !== lastPpStatus) {
+    lastPpStatus = ok;
+    broadcast({ type: 'pp-status', connected: ok, version: r.version || null });
+  }
+}, PP_HEALTH_MS);
+
 // ── Detection Worker ──────────────────────────────────────────────────────
 let detectionWorker  = null;
 let workerBasicReady = false;   // all three layers ready after init
@@ -994,6 +1028,50 @@ app.post('/api/stop-listening', async (_, res) => {
   res.json({ ok: true });
 });
 
+// ── Vosk offline model installer ─────────────────────────────────────────
+// GUI-driven counterpart to `npm run vosk:install`. The settings panel POSTs
+// here when the operator hits "Download offline model" and renders the
+// streamed NDJSON progress events as a progress bar.
+// One install at a time — second call returns 409 instead of double-downloading.
+const voskInstaller = require('./vosk_installer');
+let voskInstallInProgress = false;
+
+app.get('/api/vosk/status', (_req, res) => {
+  res.json({
+    installed: voskInstaller.isModelPresent(),
+    modelDir:  voskInstaller.modelDir(),
+    installing: voskInstallInProgress,
+  });
+});
+
+app.post('/api/vosk/install', async (_req, res) => {
+  if (voskInstallInProgress) {
+    return res.status(409).json({ error: 'install already in progress' });
+  }
+  voskInstallInProgress = true;
+
+  res.setHeader('Content-Type', 'application/x-ndjson');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+
+  const send = (obj) => {
+    try { res.write(JSON.stringify(obj) + '\n'); } catch {}
+  };
+
+  try {
+    await voskInstaller.installVoskModel({
+      onProgress: (e) => send(e),
+    });
+    send({ phase: 'complete', ok: true });
+  } catch (err) {
+    send({ phase: 'complete', ok: false, error: err.message || String(err) });
+  } finally {
+    voskInstallInProgress = false;
+    res.end();
+  }
+});
+
 // ─────────────────────────────────────────────────────────────────────────
 // CONTENT STUDIO — sermon notes & sermon points
 //   Saved sessions live as JSON in <app-data>/sessions/<id>.json. Generation
@@ -1534,6 +1612,14 @@ async function stopVosk() {
     } catch {}
     try { voskRecognizer.free(); } catch {}
     voskRecognizer = null;
+  }
+  // The model itself is the ~100 MB native heap allocation — recognizers are
+  // cheap by comparison. Free it on stop so switching to Deepgram or just
+  // pausing listening immediately returns that memory to the OS. The next
+  // startVosk() call lazily reloads it via loadVoskModel().
+  if (voskModel) {
+    try { voskModel.free(); } catch {}
+    voskModel = null;
   }
   voskLastPartial = '';
   connectionState = 'disconnected';

@@ -1439,6 +1439,110 @@ async function populateAudioDevices() {
 
 refreshDevicesBtn?.addEventListener('click', populateAudioDevices);
 
+// ── Offline (Vosk) model installer UI ────────────────────────────────────
+// Shown only when the Speech Engine toggle is set to "Offline". Streams
+// NDJSON progress events from POST /api/vosk/install into a progress bar
+// so the operator doesn't have to drop to a terminal to run npm scripts.
+(function wireVoskInstaller() {
+  const group       = document.getElementById('vosk-installer-group');
+  const statusLine  = document.getElementById('vosk-status-line');
+  const installBtn  = document.getElementById('vosk-install-btn');
+  const progressWrap = document.getElementById('vosk-progress-wrap');
+  const progressBar  = document.getElementById('vosk-progress-bar');
+  const progressText = document.getElementById('vosk-progress-text');
+  const engineToggle = document.getElementById('speech-engine-toggle');
+  if (!group || !installBtn) return;
+
+  async function refreshStatus() {
+    try {
+      const r = await fetch(`${SERVER}/api/vosk/status`);
+      const s = await r.json();
+      if (s.installed) {
+        statusLine.textContent = '✓ Offline model installed';
+        statusLine.style.color = 'var(--accent)';
+        installBtn.style.display = 'none';
+      } else if (s.installing) {
+        statusLine.textContent = 'Install in progress…';
+        installBtn.style.display = 'none';
+      } else {
+        statusLine.textContent = 'Offline model not installed.';
+        statusLine.style.color = '';
+        installBtn.style.display = '';
+      }
+    } catch {
+      statusLine.textContent = 'Cannot reach server.';
+    }
+  }
+
+  // Show/hide the whole widget based on which engine is selected. The toggle
+  // dispatches a custom click; we just react to any click inside it.
+  function syncVisibility() {
+    const active = engineToggle?.querySelector('.toggle-btn.active');
+    const isOffline = active?.dataset.engine === 'browser';
+    group.style.display = isOffline ? '' : 'none';
+    if (isOffline) refreshStatus();
+  }
+  engineToggle?.addEventListener('click', () => setTimeout(syncVisibility, 0));
+  syncVisibility();
+
+  installBtn.addEventListener('click', async () => {
+    installBtn.style.display = 'none';
+    progressWrap.style.display = '';
+    progressBar.style.width = '0%';
+    progressText.textContent = 'Connecting…';
+
+    let res;
+    try {
+      res = await fetch(`${SERVER}/api/vosk/install`, { method: 'POST' });
+    } catch (err) {
+      progressText.textContent = `Failed: ${err.message}`;
+      installBtn.style.display = '';
+      return;
+    }
+    if (!res.ok || !res.body) {
+      progressText.textContent = `HTTP ${res.status}`;
+      installBtn.style.display = '';
+      return;
+    }
+
+    // Stream NDJSON lines — each line is one progress event from the
+    // installer module. We keep a rolling buffer so partial lines stitch
+    // back together at the next chunk boundary.
+    const reader  = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();   // last fragment may be incomplete
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let evt;
+        try { evt = JSON.parse(line); } catch { continue; }
+        if (evt.phase === 'download' && typeof evt.pct === 'number') {
+          progressBar.style.width = evt.pct + '%';
+          progressText.textContent = `Downloading… ${evt.pct}%`;
+        } else if (evt.phase === 'extract') {
+          progressBar.style.width = '100%';
+          progressText.textContent = 'Extracting…';
+        } else if (evt.phase === 'done') {
+          progressText.textContent = evt.already ? 'Already installed.' : 'Done.';
+        } else if (evt.phase === 'complete') {
+          if (evt.ok) {
+            progressText.textContent = 'Installed.';
+            setTimeout(() => { progressWrap.style.display = 'none'; refreshStatus(); }, 1500);
+          } else {
+            progressText.textContent = `Failed: ${evt.error || 'unknown error'}`;
+            installBtn.style.display = '';
+          }
+        }
+      }
+    }
+  });
+})();
+
 // Auto-refresh the mic list when a USB headset / interface is plugged in or
 // out. The OS fires a single `devicechange` for the event but Chromium often
 // emits 2-3 in quick succession during enumeration — debounce so we don't
@@ -2808,15 +2912,32 @@ applyLookBtn?.addEventListener('click', async () => {
   tabPointsBtn?.addEventListener('click', () => setTab('points'));
   tabSourceBtn?.addEventListener('click', () => setTab('source'));
 
+  // Background pre-flight: while the Content Studio modal is open, re-ping
+  // Ollama every 15 s so the operator sees the service come back up live
+  // (e.g. they realised it wasn't running, launched it, and the badge flips
+  // green without having to close & reopen the modal). Stopped on close so
+  // we don't poll the LLM endpoint forever in the background.
+  let llmPollTimer = null;
+  function startLlmPoll() {
+    clearInterval(llmPollTimer);
+    llmPollTimer = setInterval(async () => {
+      renderLLMStatus(await fetchLLMStatus());
+    }, 15_000);
+  }
+  function stopLlmPoll() { clearInterval(llmPollTimer); llmPollTimer = null; }
+
+  function closeModal() { modal.classList.add('hidden'); stopLlmPoll(); }
+
   openBtn.addEventListener('click', () => {
     // Close Settings first — the launcher lives inside it now, and stacking
     // two modals leaves the dimmed Settings overlay behind Content Studio.
     document.getElementById('settings-modal')?.classList.add('hidden');
     modal.classList.remove('hidden');
     refreshList();
+    startLlmPoll();
   });
-  closeBtn?.addEventListener('click', () => modal.classList.add('hidden'));
-  modal.querySelector('.modal-overlay')?.addEventListener('click', () => modal.classList.add('hidden'));
+  closeBtn?.addEventListener('click', closeModal);
+  modal.querySelector('.modal-overlay')?.addEventListener('click', closeModal);
 
   // Bridge so the top-bar download menu can reuse this module's render+print
   // pipeline without duplicating templates. Window-scoped because the IIFE
