@@ -8,7 +8,7 @@
     "build": "npx @tauri-apps/cli@latest build",
     "tauri": "npx @tauri-apps/cli@latest",
     "test-server": "node server/server.js",
-    "vosk:install": "bash scripts/download-vosk-model.sh"
+    "vosk:install": "node scripts/download-vosk-model.js"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"
