@@ -577,12 +577,22 @@ function verbatimSearch(transcript, minWords = 6, limit = 3) {
     }
   }
 
-  // Candidate verses via inverted index
+  // Candidate verses via inverted index.
+  // Try both raw and healed (stemmed) form of each word so paraphrases like
+  // "loved" → "love" still retrieve the same candidates as the trie layer.
   const queryWords = [...new Set(tWords)].filter(w => w.length >= 3);
   const counts = new Map();
   for (const w of queryWords) {
+    const healed = healWord(w);
+    const seen = new Set();
     for (const idx of (verbatimIndex.get(w) || [])) {
+      seen.add(idx);
       counts.set(idx, (counts.get(idx) || 0) + 1);
+    }
+    if (healed !== w) {
+      for (const idx of (verbatimIndex.get(healed) || [])) {
+        if (!seen.has(idx)) counts.set(idx, (counts.get(idx) || 0) + 1);
+      }
     }
   }
 
@@ -709,13 +719,18 @@ function fingerprintSearch(transcript, limit = 5, contextHint = null) {
   const matchedWeight    = new Map();
   const matchedWordCount = new Map();  // track distinct word hits per verse
   for (const w of speechWords) {
-    for (const idx of (verbatimIndex.get(w) || [])) {
-      const sig = verseSignatures.get(idx);
-      if (!sig) continue;
-      const idf = sig.get(w);
-      if (idf !== undefined) {
-        matchedWeight.set(idx, (matchedWeight.get(idx) || 0) + idf);
-        matchedWordCount.set(idx, (matchedWordCount.get(idx) || 0) + 1);
+    const healed = healWord(w);
+    // Check both raw and stemmed form so paraphrases align with the trie layer.
+    // Signature lookup tries the raw key first, then the healed key.
+    for (const lookupW of healed !== w ? [w, healed] : [w]) {
+      for (const idx of (verbatimIndex.get(lookupW) || [])) {
+        const sig = verseSignatures.get(idx);
+        if (!sig) continue;
+        const idf = sig.get(lookupW) ?? sig.get(w);
+        if (idf !== undefined) {
+          matchedWeight.set(idx, (matchedWeight.get(idx) || 0) + idf);
+          matchedWordCount.set(idx, (matchedWordCount.get(idx) || 0) + 1);
+        }
       }
     }
   }
