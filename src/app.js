@@ -830,7 +830,11 @@ async function startListening() {
     // Stream PCM16 to server via WebSocket — same path for both engines.
     audioContext  = new AudioContext({ sampleRate: 16000 });
     const source  = audioContext.createMediaStreamSource(mediaStream);
-    audioProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+    // 1024 samples @ 16 kHz = 64 ms of buffering latency (down from 256 ms
+    // with the previous 4096 setting). Detection feels noticeably snappier
+    // on direct citations. A future AudioWorklet migration would also move
+    // this off the main UI thread, but 1024 is a safe drop-in.
+    audioProcessor = audioContext.createScriptProcessor(1024, 1, 1);
 
     audioProcessor.onaudioprocess = (e) => {
       if (!ws || ws.readyState !== WebSocket.OPEN) return;

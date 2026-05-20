@@ -212,12 +212,32 @@ function collapseEnd(s) {
   return s;
 }
 
+// Bounded memo cache. Sermon vocabulary is highly repetitive — once a word
+// has been healed once, every subsequent occurrence (and there are many)
+// returns from the cache instead of re-running suffixStrip + collapseEnd
+// regexes. Bounded so a pathological transcript can't grow it forever;
+// when full we drop the oldest entries (Map preserves insertion order).
+const _healCache    = new Map();
+const _HEAL_CACHE_MAX = 8192;
+
 function healWord(w) {
   if (!w) return w;
-  if (STT_HEAL[w])  return IRREGULAR[STT_HEAL[w]] || collapseEnd(suffixStrip(STT_HEAL[w]));
-  if (IRREGULAR[w]) return IRREGULAR[w];
-  if (w.length <= 2) return w;
-  return collapseEnd(suffixStrip(w));
+  const cached = _healCache.get(w);
+  if (cached !== undefined) return cached;
+
+  let healed;
+  if (STT_HEAL[w])       healed = IRREGULAR[STT_HEAL[w]] || collapseEnd(suffixStrip(STT_HEAL[w]));
+  else if (IRREGULAR[w]) healed = IRREGULAR[w];
+  else if (w.length <= 2) healed = w;
+  else healed = collapseEnd(suffixStrip(w));
+
+  if (_healCache.size >= _HEAL_CACHE_MAX) {
+    // Evict oldest ~256 entries in one pass so we don't pay this on every set.
+    const it = _healCache.keys();
+    for (let i = 0; i < 256; i++) _healCache.delete(it.next().value);
+  }
+  _healCache.set(w, healed);
+  return healed;
 }
 
 // Max distinctive words stored per verse fingerprint.
@@ -395,6 +415,39 @@ function buildAnchorTrie() {
   console.log(`[Anchor] Trie built in ${Date.now() - t0}ms — ${kept} distinctive 4-grams kept, ${skipped} common skipped.`);
 }
 
+// Hoisted out of streamWord so V8 doesn't re-allocate a fresh closure on
+// every spoken word — streamWord runs at audio-tick rate (~3-5×/s during
+// speech) so the GC churn was non-trivial. `next` and `anchors` are passed
+// in by reference; alignmentCandidates / recentHitVerses are module-scoped.
+function _advanceAnchor(node, depth, word, now, next, anchors) {
+  const child = node.get(word);
+  if (!child) return;
+  const newDepth = depth + 1;
+  if (newDepth >= ANCHOR_N) {
+    const terminal = anchorTerminals.get(child);
+    if (terminal) {
+      for (const { idx, pos } of terminal.entries) {
+        const last = recentHitVerses.get(idx) || 0;
+        if (now - last < HIT_DEDUP_MS) continue;
+        recentHitVerses.set(idx, now);
+        anchors.push({ verseIdx: idx, depth: newDepth, df: terminal.df });
+
+        // Open an alignment candidate so subsequent words can promote this
+        // anchor to confirmed. Starts already at ANCHOR_N words matched.
+        alignmentCandidates.push({
+          idx,
+          cursor:    pos + ANCHOR_N,
+          matched:   ANCHOR_N,
+          misses:    ALIGN_MISS_BUDGET,
+          confirmed: false,
+          firedAt:   now,
+        });
+      }
+    }
+  }
+  if (newDepth < ANCHOR_N) next.push({ node: child, depth: newDepth });
+}
+
 // ── Streaming advance ────────────────────────────────────────────────────
 // Called once per incoming word. Advances every active state one step and
 // opens a new state from the root. Returns any verse indexes that fired
@@ -452,37 +505,8 @@ function streamWord(raw) {
 
   // ── Layer 1: advance trie, open new anchor fires ────────────────────────
   const next = [];
-  const tryAdvance = (node, depth) => {
-    const child = node.get(word);
-    if (!child) return;
-    const newDepth = depth + 1;
-    if (newDepth >= ANCHOR_N) {
-      const terminal = anchorTerminals.get(child);
-      if (terminal) {
-        for (const { idx, pos } of terminal.entries) {
-          const last = recentHitVerses.get(idx) || 0;
-          if (now - last < HIT_DEDUP_MS) continue;
-          recentHitVerses.set(idx, now);
-          anchors.push({ verseIdx: idx, depth: newDepth, df: terminal.df });
-
-          // Open an alignment candidate so subsequent words can promote this
-          // anchor to confirmed. Starts already at ANCHOR_N words matched.
-          alignmentCandidates.push({
-            idx,
-            cursor:    pos + ANCHOR_N,
-            matched:   ANCHOR_N,
-            misses:    ALIGN_MISS_BUDGET,
-            confirmed: false,
-            firedAt:   now,
-          });
-        }
-      }
-    }
-    if (newDepth < ANCHOR_N) next.push({ node: child, depth: newDepth });
-  };
-
-  for (const s of activeStates) tryAdvance(s.node, s.depth);
-  tryAdvance(anchorTrie, 0);
+  for (const s of activeStates) _advanceAnchor(s.node, s.depth, word, now, next, anchors);
+  _advanceAnchor(anchorTrie, 0, word, now, next, anchors);
 
   activeStates = next.length > 50 ? next.slice(-50) : next;
 
