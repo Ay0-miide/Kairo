@@ -389,7 +389,14 @@ let voskActive       = false;       // true when Vosk path is the active engine
 let voskLastPartial  = '';          // last partial we broadcast — dedupe noise
 let voskPartialFlushTimer = null;   // throttles partials so we don't flood detection
 const VOSK_SAMPLE_RATE = 16000;
-const VOSK_PARTIAL_FLUSH_MS = 220;  // emit partials at most ~4×/s
+// Default partial-flush throttle. Tightened to 100 ms in reading mode so
+// scripture matches and slide transitions feel instant while a verse is
+// actively being read — see voskPartialThrottleMs() below.
+const VOSK_PARTIAL_FLUSH_MS         = 220;  // emit partials at most ~4×/s
+const VOSK_PARTIAL_FLUSH_MS_READING = 100;  // ~10×/s during active scripture reading
+function voskPartialThrottleMs() {
+  return readingModeActive ? VOSK_PARTIAL_FLUSH_MS_READING : VOSK_PARTIAL_FLUSH_MS;
+}
 const VOSK_MODEL_PATH = path.join(__dirname, 'models', 'vosk-en');
 let transcriptBuffer    = [];
 let lastFingerprintSearch    = 0;
@@ -1662,7 +1669,7 @@ function feedVoskAudio(buffer) {
           console.error('[Vosk] partial handler error:', err.message);
         });
       } catch {}
-    }, VOSK_PARTIAL_FLUSH_MS);
+    }, voskPartialThrottleMs());
   }
 }
 
