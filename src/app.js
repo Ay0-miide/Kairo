@@ -1439,6 +1439,16 @@ async function populateAudioDevices() {
 
 refreshDevicesBtn?.addEventListener('click', populateAudioDevices);
 
+// Auto-refresh the mic list when a USB headset / interface is plugged in or
+// out. The OS fires a single `devicechange` for the event but Chromium often
+// emits 2-3 in quick succession during enumeration — debounce so we don't
+// thrash the dropdown.
+let _deviceChangeTimer = null;
+navigator.mediaDevices?.addEventListener?.('devicechange', () => {
+  clearTimeout(_deviceChangeTimer);
+  _deviceChangeTimer = setTimeout(populateAudioDevices, 250);
+});
+
 // ── Top-bar download menu ──────────────────────────────────────────────────
 // One canonical place for all downloadable content: AI-generated sermon
 // note/points (PDF, opens print-window flow) and live-session transcript +
