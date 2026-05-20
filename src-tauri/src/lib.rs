@@ -29,6 +29,54 @@ fn splash_data_url() -> String {
 
 struct ServerProcess(Arc<Mutex<Option<Child>>>);
 
+/// Holds the dynamically-allocated server port and auth token. Generated once
+/// at startup, passed to the Node sidecar via env vars, and surfaced to the
+/// frontend via Tauri IPC. Allows the server to bind to an OS-assigned free
+/// loopback port (no hardcoded 7777, no `kill -9` on collision) and requires
+/// a shared secret on every HTTP/WS request to prevent other local processes
+/// from controlling the live display.
+struct ServerConfig {
+    port:  u16,
+    token: String,
+}
+
+/// Prefer the historical port 7777 (so `frontendDist` in tauri.conf.json keeps
+/// working in the common case and the existing dev workflow is untouched). If
+/// 7777 is already in use, fall back to an OS-assigned free port. The window
+/// is then navigated to the actual URL after the server comes up — see the
+/// post-health-check navigation step in `setup`.
+///
+/// The probe listener is dropped immediately; Node re-binds a moment later.
+/// There is a tiny race window (~ms) but no other process is realistically
+/// going to grab that exact port in between.
+fn pick_free_port() -> u16 {
+    if std::net::TcpListener::bind("127.0.0.1:7777").is_ok() {
+        return 7777;
+    }
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .ok()
+        .and_then(|l| l.local_addr().ok())
+        .map(|a| a.port())
+        .unwrap_or(7777)
+}
+
+/// 32 bytes of OS entropy → URL-safe base64. ~43 chars, ~256 bits of entropy.
+fn generate_auth_token() -> String {
+    let mut bytes = [0u8; 32];
+    if getrandom::getrandom(&mut bytes).is_err() {
+        // Fallback: never happens on supported platforms, but if the OS RNG
+        // is unavailable we'd rather start with a weak token than refuse to boot.
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        for (i, b) in bytes.iter_mut().enumerate() {
+            *b = ((nanos >> (i % 16)) as u8) ^ (i as u8);
+        }
+    }
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+}
+
 #[cfg(target_os = "macos")]
 struct SyphonState(Arc<Mutex<syphon::SyphonHandle>>);
 
@@ -74,7 +122,7 @@ fn find_bundled_node() -> Option<std::path::PathBuf> {
 // ── Server launcher ───────────────────────────────────────────────────────
 
 #[cfg_attr(debug_assertions, allow(dead_code))]
-fn start_server(app: &AppHandle) -> Option<Child> {
+fn start_server(app: &AppHandle, port: u16, token: &str) -> Option<Child> {
     // Resolve Node.js binary
     #[cfg(debug_assertions)]
     let node_bin = find_system_node();
@@ -145,6 +193,11 @@ fn start_server(app: &AppHandle) -> Option<Child> {
         .env("KAIRO_DB_DIR", db_dir.to_str().unwrap_or(""))
         // Writable dir for settings.json (read-only bundle path won't work in production)
         .env("KAIRO_APP_DATA_DIR", app_data_dir.to_str().unwrap_or(""))
+        // Dynamic port + shared-secret token. The Node server reads these and
+        // binds to 127.0.0.1:<port>, rejecting any HTTP/WS request without
+        // the matching token.
+        .env("KAIRO_SERVER_PORT", port.to_string())
+        .env("KAIRO_AUTH_TOKEN",  token)
         .spawn()
     {
         Ok(child) => {
@@ -161,8 +214,18 @@ fn start_server(app: &AppHandle) -> Option<Child> {
 // ── Tauri commands ────────────────────────────────────────────────────────
 
 #[tauri::command]
-fn get_server_port() -> u16 {
-    7777
+fn get_server_port(state: tauri::State<'_, ServerConfig>) -> u16 {
+    state.port
+}
+
+#[tauri::command]
+fn get_server_token(state: tauri::State<'_, ServerConfig>) -> String {
+    state.token.clone()
+}
+
+#[tauri::command]
+fn get_server_config(state: tauri::State<'_, ServerConfig>) -> serde_json::Value {
+    serde_json::json!({ "port": state.port, "token": state.token })
 }
 
 /// Called from the frontend when the user clicks "Update & Restart".
@@ -274,10 +337,20 @@ fn syphon_update(_verse: String, _reference: String) -> Result<(), String> { Ok(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Allocate the server's port + auth token ONCE, up front, so the same
+    // values are visible to the Node sidecar (via env) and to the frontend
+    // (via the get_server_config IPC command).
+    let server_config = ServerConfig {
+        port:  pick_free_port(),
+        token: generate_auth_token(),
+    };
+    println!("[KAIRO] Server will bind to 127.0.0.1:{}", server_config.port);
+
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(ServerProcess(Arc::new(Mutex::new(None))))
+        .manage(server_config)
         .manage(NdiState(Arc::new(Mutex::new(ndi::NdiHandle::default()))));
 
     #[cfg(target_os = "macos")]
@@ -288,6 +361,8 @@ pub fn run() {
     builder
         .invoke_handler(tauri::generate_handler![
             get_server_port,
+            get_server_token,
+            get_server_config,
             install_update,
             ndi_available,
             ndi_start,
@@ -331,10 +406,11 @@ pub fn run() {
 
             // Start the bundled Node.js server.
             // In dev, the server is started by `beforeDevCommand` in tauri.conf.json
-            // so we don't spawn a second one (which would collide on port 7777).
+            // so we don't spawn a second one (which would collide on the same port).
             #[cfg(not(debug_assertions))]
             {
-                let child = start_server(&handle);
+                let cfg = app.state::<ServerConfig>();
+                let child = start_server(&handle, cfg.port, &cfg.token);
                 *app.state::<ServerProcess>().0.lock().unwrap() = child;
             }
             #[cfg(debug_assertions)]
@@ -346,6 +422,10 @@ pub fn run() {
             // Poll /health until the server responds, then close splash and
             // show the main window. Max wait: 15 seconds (30 × 500ms).
             let handle2 = handle.clone();
+            let health_url = {
+                let cfg = handle.state::<ServerConfig>();
+                format!("http://127.0.0.1:{}/health", cfg.port)
+            };
             std::thread::spawn(move || {
                 let client = reqwest::blocking::Client::builder()
                     .timeout(std::time::Duration::from_secs(1))
@@ -355,7 +435,7 @@ pub fn run() {
                 let mut server_ready = false;
                 for attempt in 0..30 {
                     std::thread::sleep(std::time::Duration::from_millis(500));
-                    if client.get("http://localhost:7777/health").send().is_ok() {
+                    if client.get(&health_url).send().is_ok() {
                         println!("[KAIRO] Server ready after ~{}ms", attempt * 500);
                         server_ready = true;
                         break;
@@ -369,6 +449,16 @@ pub fn run() {
                 // is seamless, THEN close the splash so there's no flash of
                 // empty desktop between the two.
                 if let Some(win) = handle2.get_webview_window("main") {
+                    // If 7777 was taken and Tauri allocated a different port,
+                    // the auto-loaded URL from `frontendDist` (localhost:7777)
+                    // won't work — redirect the webview to the real port.
+                    let cfg = handle2.state::<ServerConfig>();
+                    if cfg.port != 7777 {
+                        let _ = win.eval(&format!(
+                            "window.location.replace('http://127.0.0.1:{}/');",
+                            cfg.port
+                        ));
+                    }
                     let _ = win.show();
                     let _ = win.set_focus();
                 }

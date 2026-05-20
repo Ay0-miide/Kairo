@@ -88,8 +88,27 @@
     const legacyOpacity = parseInt(params.get('opacity') || '80', 10) / 100;
 
     // ── State ──────────────────────────────────────────────────────────────
-    const WS_URL         = 'ws://localhost:7777';
+    // Derive WS URL from the page origin (Node sidecar serves this file, so
+    // location.host is always correct — and matches whichever port Tauri
+    // picked at launch).
+    const WS_URL = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}`;
     const RECONNECT_DELAY = 3000;
+
+    // Fetch the auth token from Tauri once at startup, then append it to the
+    // WS URL. In a non-Tauri context the call no-ops and we connect unauthed
+    // (server also treats auth as optional when its env var is absent).
+    let AUTH_TOKEN = '';
+    async function loadAuthToken() {
+      try {
+        const inv = window.__TAURI__?.core?.invoke || window.__TAURI__?.invoke;
+        if (inv) AUTH_TOKEN = await inv('get_server_token');
+      } catch {}
+    }
+    function authedWsUrl() {
+      return AUTH_TOKEN
+        ? WS_URL + '?token=' + encodeURIComponent(AUTH_TOKEN)
+        : WS_URL;
+    }
 
     let ws             = null;
     let reconnectTimer = null;
@@ -461,7 +480,7 @@
 
         setConnStatus('reconnecting', 'Connecting…');
 
-        try { ws = new WebSocket(WS_URL); }
+        try { ws = new WebSocket(authedWsUrl()); }
         catch { scheduleReconnect(); return; }
 
         ws.onopen = () => {
@@ -540,8 +559,9 @@
     // 2. Initial render (empty verse/ref)
     renderStage('', '', false);
 
-    // 3. Connect WebSocket
-    connect();
+    // 3. Connect WebSocket (after the auth token is loaded so the upgrade
+    //    URL carries it; falls back to unauthed when not running under Tauri).
+    loadAuthToken().finally(connect);
     </script>
 </body>
 </html>

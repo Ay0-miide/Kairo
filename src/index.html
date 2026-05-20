@@ -856,11 +856,11 @@
                         await existing.show();
                         await existing.setFocus();
                         // Push the new URL so layout / opacity changes apply.
-                        await existing.navigate('http://localhost:7777' + url);
+                        await existing.navigate(location.origin + url);
                         return;
                     }
                     new WebviewWindow(label, {
-                        url: 'http://localhost:7777' + url,
+                        url: location.origin + url,
                         title: 'KAIRO Display',
                         width:  opts.width  || 1280,
                         height: opts.height || 720,

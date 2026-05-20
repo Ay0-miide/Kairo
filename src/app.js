@@ -3,8 +3,43 @@
 // and fetch (commands). No Electron IPC.
 'use strict';
 
-const SERVER = 'http://localhost:7777';
-const WS_URL = 'ws://localhost:7777';
+// The frontend is served BY the Node sidecar, so window.location is always
+// the right origin — no need to hardcode the port. Tauri picks a free port
+// at launch and may not be 7777.
+const SERVER = `${location.protocol}//${location.host}`;
+const WS_URL = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}`;
+
+// Auth token shared between Tauri and the Node sidecar. Fetched once at boot
+// via Tauri IPC, then injected into every fetch (Authorization header) and
+// WebSocket URL (?token=…). In a non-Tauri context (e.g. opening index.html
+// in a stock browser during dev) the IPC call fails and we run unauthenticated
+// — the server also treats auth as optional when its env var is absent.
+let AUTH_TOKEN = '';
+async function loadAuthToken() {
+  try {
+    const inv = window.__TAURI__?.core?.invoke || window.__TAURI__?.invoke;
+    if (!inv) return;
+    AUTH_TOKEN = await inv('get_server_token');
+  } catch (err) {
+    console.warn('[KAIRO] Could not load auth token from Tauri:', err?.message || err);
+  }
+}
+
+// Wrap fetch so every call automatically carries the token. All existing
+// `fetch(${SERVER}/api/...)` call sites work unchanged.
+const _origFetch = window.fetch.bind(window);
+window.fetch = (input, init = {}) => {
+  if (!AUTH_TOKEN) return _origFetch(input, init);
+  const headers = new Headers(init.headers || (typeof input !== 'string' && input?.headers) || {});
+  if (!headers.has('Authorization')) headers.set('Authorization', `Bearer ${AUTH_TOKEN}`);
+  return _origFetch(input, { ...init, headers });
+};
+
+// Append ?token=… to a WS URL so the server can authenticate the upgrade.
+function authedWsUrl(base) {
+  if (!AUTH_TOKEN) return base;
+  return base + (base.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(AUTH_TOKEN);
+}
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 // HTML escape for safe interpolation into innerHTML or attributes. Same map
@@ -149,7 +184,7 @@ const ppEnabledToggle    = document.getElementById('pp-enabled-toggle');
 // ── WebSocket ──────────────────────────────────────────────────────────────
 function connectWS() {
   if (ws && ws.readyState < 2) return;
-  ws = new WebSocket(WS_URL);
+  ws = new WebSocket(authedWsUrl(WS_URL));
 
   ws.onopen = () => {
     console.log('[WS] Connected');
@@ -2821,6 +2856,8 @@ applyLookBtn?.addEventListener('click', async () => {
   }
 })();
 
-// Init
+// Init — load the auth token from Tauri FIRST so all subsequent fetch / WS
+// traffic carries the bearer header. Static assets and /health are exempt
+// on the server side, so the page itself loads even before this resolves.
 renderLooksList();
-connectWS();
+loadAuthToken().finally(connectWS);
