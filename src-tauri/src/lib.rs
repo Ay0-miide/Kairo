@@ -461,15 +461,20 @@ pub fn run() {
                     // The window auto-loads `frontendDist` (localhost:7777) at
                     // creation time — which is at app launch, BEFORE the Node
                     // sidecar is listening — so that first navigation fails
-                    // (connection refused → white screen) and is never retried.
-                    // Replacing the location here guarantees a fresh load
-                    // against a ready server, whether the port is the default
-                    // 7777 or an OS-assigned fallback when 7777 was taken.
+                    // (connection refused → blank page) and must be retried.
+                    //
+                    // We use the NATIVE `navigate()` (Rust → webview command)
+                    // rather than `eval("location.replace(...)")`. After a
+                    // failed initial load the page has no live JS context, so
+                    // an in-page `eval` silently no-ops and leaves a white
+                    // screen — exactly what happened on a cold /Applications
+                    // launch where the server takes a few seconds to bind.
+                    // `navigate()` reloads the webview regardless of its state.
                     let cfg = handle2.state::<ServerConfig>();
-                    let _ = win.eval(&format!(
-                        "window.location.replace('http://127.0.0.1:{}/');",
-                        cfg.port
-                    ));
+                    match format!("http://127.0.0.1:{}/", cfg.port).parse::<tauri::Url>() {
+                        Ok(url) => { let _ = win.navigate(url); }
+                        Err(e)  => eprintln!("[KAIRO] invalid frontend URL: {e}"),
+                    }
                     let _ = win.show();
                     let _ = win.set_focus();
                 }
