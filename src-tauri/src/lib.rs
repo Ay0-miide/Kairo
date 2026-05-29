@@ -433,32 +433,43 @@ pub fn run() {
                     .unwrap_or_default();
 
                 let mut server_ready = false;
-                for attempt in 0..30 {
+                for attempt in 0..40 {
                     std::thread::sleep(std::time::Duration::from_millis(500));
-                    if client.get(&health_url).send().is_ok() {
-                        println!("[KAIRO] Server ready after ~{}ms", attempt * 500);
-                        server_ready = true;
-                        break;
+                    // `/health` answers as soon as Express binds (~500ms), but the
+                    // detection worker (map load, anchor trie, fingerprints) needs a
+                    // couple more seconds. Keep the splash up until `workerBasicReady`
+                    // flips true so the user never lands on a half-initialised app —
+                    // this is the "few extra seconds" of loading the splash should show.
+                    if let Ok(resp) = client.get(&health_url).send() {
+                        let body = resp.text().unwrap_or_default();
+                        if body.contains("\"workerBasicReady\":true") {
+                            println!("[KAIRO] Server + worker ready after ~{}ms", attempt * 500);
+                            server_ready = true;
+                            break;
+                        }
                     }
                 }
                 if !server_ready {
-                    eprintln!("[KAIRO] Server failed to come up within 15s — showing main window anyway so the user isn't stuck on the splash.");
+                    eprintln!("[KAIRO] Server/worker not ready within 20s — showing main window anyway so the user isn't stuck on the splash.");
                 }
 
                 // Show the main window FIRST so the focus transfer from splash
                 // is seamless, THEN close the splash so there's no flash of
                 // empty desktop between the two.
                 if let Some(win) = handle2.get_webview_window("main") {
-                    // If 7777 was taken and Tauri allocated a different port,
-                    // the auto-loaded URL from `frontendDist` (localhost:7777)
-                    // won't work — redirect the webview to the real port.
+                    // ALWAYS (re)navigate now that the server is confirmed up.
+                    // The window auto-loads `frontendDist` (localhost:7777) at
+                    // creation time — which is at app launch, BEFORE the Node
+                    // sidecar is listening — so that first navigation fails
+                    // (connection refused → white screen) and is never retried.
+                    // Replacing the location here guarantees a fresh load
+                    // against a ready server, whether the port is the default
+                    // 7777 or an OS-assigned fallback when 7777 was taken.
                     let cfg = handle2.state::<ServerConfig>();
-                    if cfg.port != 7777 {
-                        let _ = win.eval(&format!(
-                            "window.location.replace('http://127.0.0.1:{}/');",
-                            cfg.port
-                        ));
-                    }
+                    let _ = win.eval(&format!(
+                        "window.location.replace('http://127.0.0.1:{}/');",
+                        cfg.port
+                    ));
                     let _ = win.show();
                     let _ = win.set_focus();
                 }

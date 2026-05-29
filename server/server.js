@@ -308,6 +308,7 @@ function isStaticAsset(p) {
   return p === '/' || /\.(html|css|js|map|png|jpg|jpeg|gif|svg|ico|woff2?|ttf|otf)$/i.test(p);
 }
 app.use((req, res, next) => {
+  if (process.env.KAIRO_ACCESS_LOG) console.log(`[REQ] ${req.method} ${req.path}`);
   if (!AUTH_REQUIRED) return next();
   if (PUBLIC_PATHS.has(req.path) || isStaticAsset(req.path)) return next();
   const hdr   = req.headers.authorization || '';
@@ -397,7 +398,10 @@ const VOSK_PARTIAL_FLUSH_MS_READING = 100;  // ~10×/s during active scripture r
 function voskPartialThrottleMs() {
   return readingModeActive ? VOSK_PARTIAL_FLUSH_MS_READING : VOSK_PARTIAL_FLUSH_MS;
 }
-const VOSK_MODEL_PATH = path.join(__dirname, 'models', 'vosk-en');
+const VOSK_MODELS_DIR = process.env.KAIRO_APP_DATA_DIR
+  ? path.join(process.env.KAIRO_APP_DATA_DIR, 'models')
+  : path.join(__dirname, 'models');
+const VOSK_MODEL_PATH = path.join(VOSK_MODELS_DIR, 'vosk-en');
 let transcriptBuffer    = [];
 let lastFingerprintSearch    = 0;
 const FINGERPRINT_INTERVAL_MS = 1000;   // don't run fingerprint search more than once per 1s
@@ -1045,8 +1049,8 @@ let voskInstallInProgress = false;
 
 app.get('/api/vosk/status', (_req, res) => {
   res.json({
-    installed: voskInstaller.isModelPresent(),
-    modelDir:  voskInstaller.modelDir(),
+    installed: voskInstaller.isModelPresent(VOSK_MODELS_DIR),
+    modelDir:  voskInstaller.modelDir(VOSK_MODELS_DIR),
     installing: voskInstallInProgress,
   });
 });
@@ -1068,6 +1072,7 @@ app.post('/api/vosk/install', async (_req, res) => {
 
   try {
     await voskInstaller.installVoskModel({
+      modelsDir: VOSK_MODELS_DIR,
       onProgress: (e) => send(e),
     });
     send({ phase: 'complete', ok: true });

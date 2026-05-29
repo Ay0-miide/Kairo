@@ -1904,6 +1904,10 @@ select {
   flex-direction: column;
   gap: 5px;
 }
+/* Flex column children default to flex-shrink:1, which makes the cards squeeze
+   to fit the container instead of overflowing into the scroll area. Pin them
+   so the scrollbar takes over once the list outgrows the viewport. */
+.cs-live-queue-body > * { flex-shrink: 0; }
 
 /* Scrollable full-height variant — flex parent gives it a bounded height,
    overflow-y from .cs-live-queue-body does the scrolling. The 1 1 0 shorthand

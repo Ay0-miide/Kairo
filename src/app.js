@@ -1000,33 +1000,51 @@ async function loadSettings() {
   } catch {}
 }
 
-// ── First-run onboarding banner ────────────────────────────────────────────
+// ── First-run onboarding modal ─────────────────────────────────────────────
+// Dismissible centered overlay prompting for the Deepgram key. Dismissed (Skip
+// or close) it stays hidden for the session; reappears next launch until a key
+// is saved.
+let firstRunDismissed = false;
 function showFirstRunBannerIfNeeded(s) {
-  const existing = document.getElementById('first-run-banner');
+  const modal = document.getElementById('first-run-modal');
+  if (!modal) return;
   if (s && s.deepgramApiKey) {
-    // Key is now set — remove banner if it was showing.
-    if (existing) existing.remove();
+    // Key is set — make sure the modal is closed.
+    modal.classList.add('hidden');
     return;
   }
-  if (existing) return; // already showing
-  const banner = document.createElement('div');
-  banner.id = 'first-run-banner';
-  banner.innerHTML = `
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-    </svg>
-    <span>No Deepgram API key — KAIRO won't detect verses until you add one.</span>
-    <button class="frb-btn" id="frb-open-settings">Open Settings</button>
-    <button class="frb-close" id="frb-close" aria-label="Dismiss">✕</button>
-  `;
-  // Insert at the very top of the page, above everything.
-  document.body.insertBefore(banner, document.body.firstChild);
-  document.getElementById('frb-open-settings').addEventListener('click', () => {
-    settingsModal?.classList.remove('hidden');
-    // Defer focus so the modal has time to lay out before we focus inside it.
-    setTimeout(() => deepgramKeyInput?.focus(), 50);
-  });
-  document.getElementById('frb-close').addEventListener('click', () => banner.remove());
+  if (firstRunDismissed || !modal.classList.contains('hidden')) return; // dismissed or already showing
+  modal.classList.remove('hidden');
+  const input = document.getElementById('first-run-deepgram-key');
+  if (input) input.value = '';
+  // Defer focus so the overlay has laid out before we focus inside it.
+  setTimeout(() => input?.focus(), 50);
+}
+
+function closeFirstRunModal() {
+  firstRunDismissed = true;
+  document.getElementById('first-run-modal')?.classList.add('hidden');
+}
+
+async function saveFirstRunKey() {
+  const input = document.getElementById('first-run-deepgram-key');
+  const key   = (input?.value || '').trim();
+  if (!key) { closeFirstRunModal(); return; }
+  // Mirror into the Settings field so the rest of the app stays in sync, then
+  // persist through the same endpoint saveCurrentSettings uses.
+  if (deepgramKeyInput) deepgramKeyInput.value = key;
+  try {
+    await fetch(`${SERVER}/api/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...settings, deepgramApiKey: key }),
+    });
+    settings = { ...settings, deepgramApiKey: key };
+    toast('Deepgram key saved', 'success');
+  } catch {
+    toast('Could not save key — try again in Settings', 'error');
+  }
+  closeFirstRunModal();
 }
 
 async function saveCurrentSettings() {
@@ -1285,6 +1303,15 @@ closeSettingsBtn?.addEventListener('click', closeModal);
 cancelSettingsBtn?.addEventListener('click', closeModal);
 saveSettingsBtn?.addEventListener('click',  saveCurrentSettings);
 document.querySelector('.modal-overlay')?.addEventListener('click', closeModal);
+
+// First-run Deepgram modal wiring
+document.getElementById('first-run-save')?.addEventListener('click', saveFirstRunKey);
+document.getElementById('first-run-skip')?.addEventListener('click', closeFirstRunModal);
+document.getElementById('close-first-run')?.addEventListener('click', closeFirstRunModal);
+document.querySelector('#first-run-modal .modal-overlay')?.addEventListener('click', closeFirstRunModal);
+document.getElementById('first-run-deepgram-key')?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') saveFirstRunKey();
+});
 
 testPPBtn?.addEventListener('click', async () => {
   testPPBtn.textContent = 'Testing…';

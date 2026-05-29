@@ -739,6 +739,36 @@
         </div>
     </div>
 
+    <!-- ═══ FIRST-RUN DEEPGRAM MODAL ═══ -->
+    <div id="first-run-modal" class="modal hidden">
+        <div class="modal-overlay"></div>
+        <div class="modal-content" style="max-width:460px;">
+            <div class="modal-header">
+                <h2>Welcome to KAIRO</h2>
+                <button id="close-first-run" class="modal-close-btn" aria-label="Dismiss">✕</button>
+            </div>
+            <div class="modal-body">
+                <p style="margin:0 0 16px;line-height:1.5;color:var(--text-dim,#aaa);font-size:13px;">
+                    KAIRO listens to spoken scripture and detects verses in real time. To transcribe
+                    live audio it needs a Deepgram API key. Paste yours below, or skip for now and add
+                    it later under Settings.
+                </p>
+                <label for="first-run-deepgram-key" style="display:block;margin-bottom:6px;font-size:12px;font-weight:600;">Deepgram API Key</label>
+                <input id="first-run-deepgram-key" type="password" autocomplete="off" spellcheck="false"
+                       placeholder="Paste your Deepgram API key"
+                       style="width:100%;box-sizing:border-box;" />
+                <a href="https://console.deepgram.com/signup" target="_blank" rel="noopener"
+                   style="display:inline-block;margin-top:10px;font-size:12px;color:var(--accent,#6aa6ff);text-decoration:none;">
+                    Get a free Deepgram key →
+                </a>
+            </div>
+            <div class="modal-footer">
+                <button id="first-run-skip" class="modal-btn secondary">Skip for now</button>
+                <button id="first-run-save" class="modal-btn primary">Save &amp; Continue</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Audio Level -->
     <div id="audio-level" class="hidden-el"></div>
     <!-- Insights status (hidden, JS compat) -->
