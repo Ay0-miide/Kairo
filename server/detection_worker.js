@@ -69,6 +69,7 @@ function applyContextBoost(matchedWeight, contextHint, allVerses) {
 let verseMetadata        = [];
 let directIndex          = null;   // Map<"Book|ch|vs", verse>
 let verbatimIndex        = null;   // Map<word, number[]>  — inverted index for phrase match
+let stemIndex            = null;   // Map<stem, number[]>  — healed(word) → verses, morphology bridge
 let idfMap               = null;   // Map<word, number>    — IDF scores
 let verseSignatures      = null;   // Map<idx, Map<word, idf>> — top N distinctive words per verse
 let verseSignatureWeight = null;   // Map<idx, number> — total IDF weight of each verse's signature
@@ -314,6 +315,25 @@ async function init() {
   }
   verbatimIndex = tempIndex;
   console.log(`[DetectionWorker] Verbatim index: ${verbatimIndex.size} unique words.`);
+
+  // Stem index: healed(word) → [verseIdx, ...]. The raw verbatim index keys on
+  // literal verse words, so a lookup of healWord("loved")="lov" finds nothing.
+  // This index lets verbatim/fingerprint retrieval bridge morphology the same
+  // way the trie layer does — "loved", "loveth" and "love" all stem to "lov"
+  // and resolve to the same bucket.
+  {
+    const stemTmp = new Map();   // stem → Set<idx>
+    for (const [word, indices] of verbatimIndex.entries()) {
+      const stem = healWord(word);
+      if (stem === word) continue;          // raw lookups already cover these
+      let bucket = stemTmp.get(stem);
+      if (!bucket) { bucket = new Set(); stemTmp.set(stem, bucket); }
+      for (const idx of indices) bucket.add(idx);
+    }
+    stemIndex = new Map();
+    for (const [stem, set] of stemTmp) stemIndex.set(stem, [...set]);
+    console.log(`[DetectionWorker] Stem index: ${stemIndex.size} stems.`);
+  }
 
   // IDF map — log((N - df + 0.5) / (df + 0.5) + 1)
   // High IDF = rare/distinctive word (e.g. "meditate" ≈ 7.6)
@@ -614,7 +634,7 @@ function verbatimSearch(transcript, minWords = 6, limit = 3) {
       counts.set(idx, (counts.get(idx) || 0) + 1);
     }
     if (healed !== w) {
-      for (const idx of (verbatimIndex.get(healed) || [])) {
+      for (const idx of (stemIndex.get(healed) || [])) {
         if (!seen.has(idx)) counts.set(idx, (counts.get(idx) || 0) + 1);
       }
     }
@@ -728,81 +748,100 @@ function verbatimSearch(transcript, minWords = 6, limit = 3) {
 //
 // A verse with zero word matches never gets promoted — boost only amplifies
 // an existing score. This preserves the 87%+ word-match precision.
-function fingerprintSearch(transcript, limit = 5, contextHint = null) {
-  const norm = s => s.toLowerCase().replace(RE_NORM, '').replace(RE_WS, ' ').trim();
-  const speechWords = [...new Set(
-    norm(transcript).split(' ')
-      .filter(w => w.length >= 4 && !STOP_WORDS.has(w))
-  )];
-
-  if (speechWords.length < 1) return { results: [], confidence: 'none' };
-
-  // Accumulate matched signature IDF per verse.
-  // Only increments if the speech word is actually in that verse's fingerprint —
-  // so common words that appear in many verses but aren't signature words don't score.
+// Accumulate matched signature IDF per spoken word. A verse only scores when
+// the spoken word (raw OR stemmed) is one of its distinctive signature words.
+// Both the raw and the healed form are tried so a spoken inflection bridges to
+// the base form a verse stores ("flourishing" → "flourish"), but each spoken
+// word scores a given verse AT MOST ONCE — the per-word `seen` guard is what
+// stops the heaven/heavens-style double counting. Fingerprint stays keyed on
+// literal signature words (not a stem index): widening retrieval to every
+// morphological variant dilutes distinctive-word precision (e.g. "renewing" +
+// "eagles" would tie Isaiah 40:31 with Psalm 103:5). `restrict`, when given,
+// scopes scoring to a verse-index Set (the topic library).
+function accumulateFingerprint(speechWords, restrict = null) {
   const matchedWeight    = new Map();
-  const matchedWordCount = new Map();  // track distinct word hits per verse
+  const matchedWordCount = new Map();
   for (const w of speechWords) {
-    const healed = healWord(w);
-    // Check both raw and stemmed form so paraphrases align with the trie layer.
-    // Signature lookup tries the raw key first, then the healed key.
-    for (const lookupW of healed !== w ? [w, healed] : [w]) {
-      for (const idx of (verbatimIndex.get(lookupW) || [])) {
+    const healed  = healWord(w);
+    const lookups = healed !== w ? [w, healed] : [w];
+    const seen    = new Set();
+    for (const lw of lookups) {
+      for (const idx of (verbatimIndex.get(lw) || [])) {
+        if (restrict && !restrict.has(idx)) continue;
+        if (seen.has(idx)) continue;            // already scored for this spoken word
         const sig = verseSignatures.get(idx);
         if (!sig) continue;
-        const idf = sig.get(lookupW) ?? sig.get(w);
+        const idf = sig.get(lw) ?? sig.get(w);
         if (idf !== undefined) {
+          seen.add(idx);
           matchedWeight.set(idx, (matchedWeight.get(idx) || 0) + idf);
           matchedWordCount.set(idx, (matchedWordCount.get(idx) || 0) + 1);
         }
       }
     }
   }
+  return { matchedWeight, matchedWordCount };
+}
 
-  if (!matchedWeight.size) return { results: [], confidence: 'none' };
-
-  // ── Context boost (tie-breaker only) ──────────────────────────────────
-  applyContextBoost(matchedWeight, contextHint, verseMetadata);
-
+// Shared scoring + confidence routing for both the full and library fingerprint
+// searches, so they can never diverge. The context boost is applied AFTER the
+// coverage threshold filter, so it only reorders already-qualified verses and
+// can never pull a sub-threshold verse into the result set.
+function scoreFingerprint(matchedWeight, matchedWordCount, contextHint, limit, fromLibrary = false) {
   // Coverage = matched signature weight / total signature weight.
   // Threshold: at least 35% of the verse's fingerprint must be covered,
   // AND at least 2 distinct signature words must match (prevents single-word
   // false positives on short verses like "thy years shall have no end").
   const COVERAGE_THRESHOLD = 0.35;
   const MIN_WORD_HITS      = 2;
-  const qualified = [...matchedWeight.entries()]
-    .map(([idx, matched]) => [idx, matched / (verseSignatureWeight.get(idx) || 1)])
-    .filter(([idx, coverage]) => coverage >= COVERAGE_THRESHOLD && (matchedWordCount.get(idx) || 0) >= MIN_WORD_HITS);
-  const scored = topK(qualified, limit + 1, (a, b) => b[1] - a[1]);
 
-  if (!scored.length) return { results: [], confidence: 'none' };
+  const coverage = new Map();
+  for (const [idx, matched] of matchedWeight) {
+    const cov = matched / (verseSignatureWeight.get(idx) || 1);
+    if (cov >= COVERAGE_THRESHOLD && (matchedWordCount.get(idx) || 0) >= MIN_WORD_HITS) {
+      coverage.set(idx, cov);
+    }
+  }
+  if (!coverage.size) return { results: [], confidence: 'none' };
+
+  // ── Context boost (tie-breaker only, qualified verses only) ───────────
+  applyContextBoost(coverage, contextHint, verseMetadata);
+
+  const scored = topK([...coverage.entries()], limit + 1, (a, b) => b[1] - a[1]);
 
   const topCoverage    = scored[0][1];
   const secondCoverage = scored.length > 1 ? scored[1][1] : 0;
   const tied           = scored.filter(([, c]) => c >= topCoverage * 0.9);
 
   let confidence;
-  if (tied.length === 1 || secondCoverage === 0) {
-    confidence = 'high';
-  } else if (tied.length <= 3 && topCoverage / secondCoverage >= 1.4) {
-    confidence = 'high';
-  } else if (tied.length <= 3) {
-    confidence = 'medium';
-  } else if (tied.length <= 5) {
-    confidence = 'low';
-  } else {
-    confidence = 'none';
-  }
+  if (tied.length === 1 || secondCoverage === 0)                     confidence = 'high';
+  else if (tied.length <= 3 && topCoverage / secondCoverage >= 1.4)  confidence = 'high';
+  else if (tied.length <= 3)                                         confidence = 'medium';
+  else if (tied.length <= 5)                                         confidence = 'low';
+  else                                                               confidence = 'none';
 
   if (confidence === 'none') return { results: [], confidence: 'none' };
 
-  const results = tied
-    .slice(0, limit)
-    .map(([idx, coverage]) => ({
-      ...formatVerse(verseMetadata[idx], Math.min(0.97, coverage), 'fingerprint'),
-    }));
+  const results = tied.slice(0, limit).map(([idx, cov]) => ({
+    ...formatVerse(verseMetadata[idx], Math.min(0.97, cov), 'fingerprint'),
+  }));
+  const out = { results, confidence };
+  if (fromLibrary) out.fromLibrary = true;
+  return out;
+}
 
-  return { results, confidence };
+function fingerprintSearch(transcript, limit = 5, contextHint = null) {
+  const norm = s => s.toLowerCase().replace(RE_NORM, '').replace(RE_WS, ' ').trim();
+  const speechWords = [...new Set(
+    norm(transcript).split(' ')
+      .filter(w => w.length >= 4 && !STOP_WORDS.has(w))
+  )];
+  if (speechWords.length < 1) return { results: [], confidence: 'none' };
+
+  const { matchedWeight, matchedWordCount } = accumulateFingerprint(speechWords);
+  if (!matchedWeight.size) return { results: [], confidence: 'none' };
+
+  return scoreFingerprint(matchedWeight, matchedWordCount, contextHint, limit);
 }
 
 // ── Topic Library ─────────────────────────────────────────────────────────
@@ -877,55 +916,13 @@ function fingerprintSearchInLibrary(transcript, limit = 5, contextHint = null) {
   )];
   if (!speechWords.length) return { results: [], confidence: 'none' };
 
-  const matchedWeight    = new Map();
-  const matchedWordCount = new Map();
-  for (const w of speechWords) {
-    for (const idx of (verbatimIndex.get(w) || [])) {
-      if (!topicLibrary.has(idx)) continue;   // library-scoped
-      const sig = verseSignatures.get(idx);
-      if (!sig) continue;
-      const idf = sig.get(w);
-      if (idf !== undefined) {
-        matchedWeight.set(idx, (matchedWeight.get(idx) || 0) + idf);
-        matchedWordCount.set(idx, (matchedWordCount.get(idx) || 0) + 1);
-      }
-    }
-  }
-
+  // Identical accumulation + scoring to the full search (raw + stem candidates,
+  // deduped), scoped to the topic library. Sharing the code keeps the fast path
+  // and the full path from ever returning different answers for the same input.
+  const { matchedWeight, matchedWordCount } = accumulateFingerprint(speechWords, topicLibrary);
   if (!matchedWeight.size) return { results: [], confidence: 'none' };
 
-  // Apply context boost (same as full search)
-  applyContextBoost(matchedWeight, contextHint, verseMetadata);
-
-  const COVERAGE_THRESHOLD = 0.35;
-  const MIN_WORD_HITS      = 2;
-  const qualified = [...matchedWeight.entries()]
-    .map(([idx, matched]) => [idx, matched / (verseSignatureWeight.get(idx) || 1)])
-    .filter(([idx, coverage]) => coverage >= COVERAGE_THRESHOLD && (matchedWordCount.get(idx) || 0) >= MIN_WORD_HITS);
-  const scored = topK(qualified, limit + 1, (a, b) => b[1] - a[1]);
-
-  if (!scored.length) return { results: [], confidence: 'none' };
-
-  const topCoverage    = scored[0][1];
-  const secondCoverage = scored.length > 1 ? scored[1][1] : 0;
-  const tied           = scored.filter(([, c]) => c >= topCoverage * 0.9);
-
-  let confidence;
-  if (tied.length === 1 || secondCoverage === 0)                       confidence = 'high';
-  else if (tied.length <= 3 && topCoverage / secondCoverage >= 1.4)   confidence = 'high';
-  else if (tied.length <= 3)                                           confidence = 'medium';
-  else if (tied.length <= 5)                                           confidence = 'low';
-  else                                                                 confidence = 'none';
-
-  if (confidence === 'none') return { results: [], confidence: 'none' };
-
-  return {
-    results: tied.slice(0, limit).map(([idx, coverage]) => ({
-      ...formatVerse(verseMetadata[idx], Math.min(0.97, coverage), 'fingerprint'),
-    })),
-    confidence,
-    fromLibrary: true,
-  };
+  return scoreFingerprint(matchedWeight, matchedWordCount, contextHint, limit, true);
 }
 
 // ── Message handler ───────────────────────────────────────────────────────

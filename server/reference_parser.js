@@ -61,6 +61,26 @@ function spokenToNumber(word) {
 
 function consumeNumber(words, idx, maxValue = Infinity) {
   if (idx >= words.length) return null;
+
+  // Hundreds composition: "<1-9> hundred [and] [<sub-hundred>]".
+  // Handles "one hundred seventy six" (176), "one hundred nineteen" (119),
+  // "one hundred and five" (105) — common in Psalm 119 verse callouts, which
+  // the digit-by-digit paths below can't compose.
+  const lead = spokenToNumber(words[idx]);
+  if (lead !== null && lead >= 1 && lead <= 9 && words[idx + 1] === 'hundred') {
+    let value = lead * 100;
+    let consumed = 2;
+    let j = idx + 2;
+    if (words[j] === 'and') { j++; consumed++; }
+    const rest = consumeNumber(words, j, 99);
+    if (rest && rest.value >= 1 && rest.value <= 99) {
+      value += rest.value;
+      consumed += rest.consumed;
+    }
+    if (value <= maxValue) return { value, consumed };
+    // else fall through — caller may reinterpret an over-max value
+  }
+
   if (idx + 2 < words.length) { const n = spokenToNumber(words.slice(idx,idx+3).join(' ')); if (n !== null && n <= maxValue) return { value: n, consumed: 3 }; }
   if (idx + 1 < words.length) { const n = spokenToNumber(words.slice(idx,idx+2).join(' ')); if (n !== null && n <= maxValue) return { value: n, consumed: 2 }; }
   const n = spokenToNumber(words[idx]);
@@ -79,7 +99,10 @@ const BOOK_ALIASES = {
   'psalms':'Psalms','psalm':'Psalms','ps':'Psalms','psa':'Psalms','pss':'Psalms','psal':'Psalms','sal':'Psalms',
   'proverbs':'Proverbs','prov':'Proverbs','pro':'Proverbs','prv':'Proverbs',
   'ecclesiastes':'Ecclesiastes','eccl':'Ecclesiastes','ecc':'Ecclesiastes','qoh':'Ecclesiastes',
-  'song of songs':'Song of Songs','song of solomon':'Song of Songs','sos':'Song of Songs','ss':'Song of Songs','cant':'Song of Songs',
+  // DB canonical name is "Song of Solomon"; the multi-word phrase is collapsed
+  // to the single token "songofsolomon" during healing so it flows through the
+  // single-word book machinery below.
+  'songofsolomon':'Song of Solomon','sos':'Song of Solomon','ss':'Song of Solomon','cant':'Song of Solomon',
   'isaiah':'Isaiah','isa':'Isaiah',
   'jeremiah':'Jeremiah','jer':'Jeremiah',
   'lamentations':'Lamentations','lam':'Lamentations',
@@ -140,7 +163,7 @@ const SINGLE_WORD_BOOKS = new Set([
   'ps','psa','pss','psal','sal',
   'prov','pro','prv',
   'eccl','ecc','qoh',
-  'sos','ss','cant',
+  'sos','ss','cant','songofsolomon',
   'isa','jer','lam',
   'ezek','eze','dan','hos','obad','oba','jon','mic','nah','hab',
   'zeph','zep','zech','zec','hag','mal',
@@ -177,7 +200,7 @@ const MAX_CHAPTERS = {
   'Joshua':24,'Judges':21,'Ruth':4,'1 Samuel':31,'2 Samuel':24,
   '1 Kings':22,'2 Kings':25,'1 Chronicles':29,'2 Chronicles':36,
   'Ezra':10,'Nehemiah':13,'Esther':10,'Job':42,'Psalms':150,
-  'Proverbs':31,'Ecclesiastes':12,'Song of Songs':8,
+  'Proverbs':31,'Ecclesiastes':12,'Song of Solomon':8,
   'Isaiah':66,'Jeremiah':52,'Lamentations':5,'Ezekiel':48,'Daniel':12,
   'Hosea':14,'Joel':3,'Amos':9,'Obadiah':1,'Jonah':4,'Micah':7,
   'Nahum':3,'Habakkuk':3,'Zephaniah':3,'Haggai':2,'Zechariah':14,'Malachi':4,
@@ -209,7 +232,7 @@ const PARSER_HEALING_PAIRS = [
   ['thessalonian','1 thessalonians'],
   ['profit chapter','proverbs chapter'],['profit verse','proverbs verse'],
   ['first chronic','1 chronicles'],['second chronic','2 chronicles'],
-  ['song of solomon','song of solomon'],['song of songs','song of solomon'],
+  ['song of songs','songofsolomon'],['song of solomon','songofsolomon'],
   // Deepgram number mishearing
   ['chapter won ','chapter one '],['verse fork','verse four'],['verse tree','verse three'],
   ['verse ate','verse eight'],['chapter ate','chapter eight'],['verse sick','verse six'],
@@ -326,7 +349,46 @@ function parseSpokenReference(text, inBibleMode = false) {
     if (!bookName) continue;
 
     let idx = i + consumed;
-    if (idx < words.length && words[idx] === 'chapter') idx++;
+    const skippedChapterKw = (idx < words.length && words[idx] === 'chapter');
+    if (skippedChapterKw) idx++;
+
+    // Single-chapter books (Obadiah, Philemon, 2 John, 3 John, Jude) have no
+    // chapter to speak — a bare number is the verse: "Jude 9" = Jude 1:9.
+    // Without this, the over-max-chapter path below rejects them, and a
+    // numbered book ("3 John 4") falls through to re-match the bare word
+    // ("John") as the wrong book.
+    if (MAX_CHAPTERS[bookName] === 1) {
+      let scan = idx;
+      if (skippedChapterKw) {                       // "...chapter 1 verse 9" — skip the spoken "1"
+        const chNum = consumeNumber(words, scan);
+        if (chNum) scan += chNum.consumed;
+      }
+      let vKeyword = -1;
+      for (let k = scan; k < words.length && k < scan + 4; k++) {
+        if (['verse','verses','vers',':'].includes(words[k])) { vKeyword = k; break; }
+        if (SINGLE_WORD_BOOKS.has(words[k])) break;
+      }
+      let vStart, consumedTo;
+      if (vKeyword >= 0) {
+        const r = consumeNumber(words, vKeyword + 1);
+        if (r) { vStart = r.value; consumedTo = vKeyword + 1 + r.consumed; }
+      } else if (!skippedChapterKw) {               // "Jude 9" — first number is the verse
+        const r = consumeNumber(words, scan);
+        if (r) { vStart = r.value; consumedTo = scan + r.consumed; }
+      }
+      if (vStart !== undefined) {
+        let vEnd = vStart;
+        if (consumedTo < words.length && ['to','through','-'].includes(words[consumedTo])) {
+          let a = consumedTo + 1;
+          if (a < words.length && ['verse','verses'].includes(words[a])) a++;
+          const e = consumeNumber(words, a);
+          if (e && e.value >= vStart) vEnd = e.value;
+        }
+        if (vEnd !== vStart) return { book: bookName, chapter: 1, verseStart: vStart, verseEnd: vEnd };
+        return { book: bookName, chapter: 1, verse: vStart };
+      }
+      // No verse number present — fall through to bare-book handling below.
+    }
 
     const chRes = consumeNumber(words, idx, MAX_CHAPTERS[bookName] || Infinity);
     if (!chRes) continue;
@@ -611,49 +673,50 @@ const referenceContext = new ReferenceContext();
 // "and verse eighteen" and resolves them against the current context.
 // Returns null if no context or no bare verse pattern found.
 
-const BARE_VERSE_PATTERNS = [
-  // "verse 17" / "verses 3 to 5" / "verse three"
-  /\b(?:and\s+)?(?:verse|verses|vers)\s+(\w+)(?:\s+(?:to|through|-)\s+(\w+))?/i,
-  // "chapter 3 verse 17" with no book — only if we have a book in context
-  /\bchapter\s+(\w+)\s+(?:verse|verses|vers)\s+(\w+)/i,
-];
-
 function resolvePartialReference(text) {
   if (!referenceContext.isValid) return null;
 
-  const clean = text.toLowerCase().replace(/[.,!?;]/g, ' ').replace(/\s+/g, ' ').trim();
+  // Tokenize through the same cleaner the full parser uses, then resolve
+  // numbers with consumeNumber so compound spoken numbers ("seventy seven",
+  // "one hundred nineteen") survive — a plain \w+ capture truncates them.
+  const words = cleanReferenceText(text).split(/\s+/).filter(Boolean);
 
   // Pattern 1 (MORE SPECIFIC, try first): "chapter N verse M" with no book.
   // Resolves when the preacher said a bare book ("Exodus") earlier, then
   // followed up later with "chapter 3 verse 13".
-  const chapVerseMatch = clean.match(/\bchapter\s+(\w+)\s+(?:verse|verses|vers)\s+(\w+)/i);
-  if (chapVerseMatch) {
-    const chapter = spokenToNumber(chapVerseMatch[1]);
-    const verse   = spokenToNumber(chapVerseMatch[2]);
-    if (chapter && verse && referenceContext.book) {
-      const maxCh = MAX_CHAPTERS[referenceContext.book];
-      if (!maxCh || chapter <= maxCh) {
-        return { book: referenceContext.book, chapter, verse, partial: true };
-      }
-    }
+  for (let i = 0; i < words.length; i++) {
+    if (words[i] !== 'chapter') continue;
+    const chRes = consumeNumber(words, i + 1);
+    if (!chRes) continue;
+    const j = i + 1 + chRes.consumed;
+    if (!['verse','verses','vers',':'].includes(words[j])) continue;
+    const vRes = consumeNumber(words, j + 1);
+    if (!vRes || !referenceContext.book) continue;
+    const maxCh = MAX_CHAPTERS[referenceContext.book];
+    if (maxCh && chRes.value > maxCh) continue;
+    return { book: referenceContext.book, chapter: chRes.value, verse: vRes.value, partial: true };
   }
 
   // Pattern 2: bare "verse N" or "verses N to M" — needs a chapter in context.
-  const bareMatch = clean.match(/\b(?:and\s+)?(?:verse|verses|vers)\s+(\w[\w\s]*?)(?:\s+(?:to|through)\s+(\w+))?(?:\s|$)/i);
-  if (bareMatch) {
-    const verseStart = spokenToNumber(bareMatch[1].trim());
-    if (verseStart && verseStart >= 1 && verseStart <= 176) {
-      const book    = referenceContext.book;
-      const chapter = referenceContext.chapter;
-      if (!chapter) return null;
-      if (bareMatch[2]) {
-        const verseEnd = spokenToNumber(bareMatch[2].trim());
-        if (verseEnd && verseEnd >= verseStart) {
-          return { book, chapter, verseStart, verseEnd, partial: true };
-        }
+  for (let i = 0; i < words.length; i++) {
+    if (!['verse','verses','vers',':'].includes(words[i])) continue;
+    const vRes = consumeNumber(words, i + 1);
+    if (!vRes) continue;
+    const verseStart = vRes.value;
+    if (verseStart < 1 || verseStart > 176) continue;
+    const book    = referenceContext.book;
+    const chapter = referenceContext.chapter;
+    if (!chapter) return null;
+    let j = i + 1 + vRes.consumed;
+    if (['to','through','-'].includes(words[j])) {
+      let a = j + 1;
+      if (['verse','verses'].includes(words[a])) a++;
+      const vEnd = consumeNumber(words, a);
+      if (vEnd && vEnd.value >= verseStart) {
+        return { book, chapter, verseStart, verseEnd: vEnd.value, partial: true };
       }
-      return { book, chapter, verse: verseStart, partial: true };
     }
+    return { book, chapter, verse: verseStart, partial: true };
   }
 
   return null;
